@@ -382,9 +382,6 @@ ompi_coll_base_bcast_intra_corrected(void *buff, int count,
                                                    &epoch_neigh[idx],
                                                    &buffers[idx * count_max]);
 
-if (matches != (epoch_neigh[idx] == epoch_global)) {
-    fprintf(stderr, "matches = %d, epoch_neigh[idx] = %lld, epoch_global= %lld, epoch_rcvd = %d\n" , matches, epoch_neigh[idx], epoch_global, buffers[idx * count_max]);
-}
                 assert(matches == (epoch_neigh[idx] == epoch_global) && "Function broken!?");
 
 
