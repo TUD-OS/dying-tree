@@ -14,5 +14,8 @@ SET_SOURCE_FILES_PROPERTIES(dying.c OBJECT_DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/d
 set(CMAKE_INCLUDE_CURRENT_DIR ON)
 
 add_wrapped_file(dying_wrap.h dying_wrap.w)
-add_library(dying SHARED dying.c dying_wrap.h)
+add_library(dying SHARED
+  dying.c
+  corrected_tree.c
+  dying_wrap.h)
 target_link_libraries(dying ${MPI_C_LIBRARIES})
