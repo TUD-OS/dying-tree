@@ -6,30 +6,38 @@
 #include <string.h>
 
 #include "dying.h"
+#include "corrected_tree.h"
 
 static MPI_Comm MPI_COMM_LIVING_WORLD;
 int will_die = 0;
 
-void die_if_needed()
+const char *read_env_or_fail(const char *var_name)
+{
+  const char *var = getenv(var_name);
+
+  if (!var) {
+    fprintf(stderr, "Variable %s is unset\n", var_name);
+    PMPI_Abort(MPI_COMM_WORLD, -1);
+    /* no return */
+  }
+
+  return var;
+}
+
+int read_env_will_die()
 {
   int rank;
 
   PMPI_Comm_rank(MPI_COMM_WORLD, &rank);
 
-  char *dying_list = getenv("DYING_LIST");
-
-  if (!dying_list) {
-    fprintf(stderr, "DYING_LIST is unset: Nobody is going to die\n");
-    PMPI_Abort(MPI_COMM_WORLD, -1);
-  }
+  const char *dying_list = read_env_or_fail("DYING_LIST");
 
   /* Traverse dying_list, check oneself */
   int dying_rank = -1;
   while (1) {
     int ret = sscanf(dying_list, "%d", &dying_rank);
     if (dying_rank == rank && ret) {
-      will_die = 1;
-      break;
+      return 1;
     }
     dying_list = strchr(dying_list, ',');
     /* Can't find a comma, hence the end of the list */
@@ -37,6 +45,29 @@ void die_if_needed()
 
     dying_list++;
   }
+
+  return 0;
+}
+
+int read_env_int(const char *var_name)
+{
+  const char *var = read_env_or_fail(var_name);
+
+  int res;
+  sscanf(var, "%d", &res);
+
+  return res;
+}
+
+void die_if_needed()
+{
+  int rank;
+
+  PMPI_Comm_rank(MPI_COMM_WORLD, &rank);
+
+  will_die = read_env_will_die();
+  corrected_corr_dist = read_env_int("CORR_DIST");
+  corrected_count_max = read_env_int("CORR_COUNT_MAX");
 
   /* Create two communicators. New world for all operations except the
      broadcast. The old comm world will be used for the corrected

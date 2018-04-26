@@ -11,6 +11,9 @@
  * Corrected trees broadcast implementation                                   *
  ******************************************************************************/
 
+int corrected_corr_dist = 11;
+int corrected_count_max = 512;
+
 /* Find MSB in a given number
  *
  * Approach taken from simulator
@@ -93,9 +96,9 @@ ompi_coll_base_bcast_intra_corrected(void *buff, int count,
                                      MPI_Comm comm)
 {
     static int const MCA_COLL_BASE_TAG_BCAST = 2342;
-    static int corr_dist = 11,    // opportunistic correction distance
-               count_max = 512,   // maximum allowed message size
-               epoch_wrap = 128; // value at which the local epoch wraps
+    int corr_dist = corrected_corr_dist, // opportunistic correction distance
+        count_max = corrected_count_max, // maximum allowed message size
+        epoch_wrap = 128; // value at which the local epoch wraps
 /* TODO: be more flexble with the corr distance (MCA or ENV?) and count_max(??) */
 
     /* Reject unexpected parameters ... it's only a prototype after all
