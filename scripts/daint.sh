@@ -6,7 +6,8 @@
 #SBATCH --mail-user=mplaneta@os.inf.tu-dresden.de
 #SBATCH --partition=normal
 #SBATCH --cpus-per-task=1
-#SBATCH --ntasks-per-core=1
+#SBATCH --ntasks-per-core=2
+#SBATCH --exclusive
 
 module load daint-mc
 
