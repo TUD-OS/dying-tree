@@ -35,7 +35,7 @@ CORR_COUNT_MAX=$MSG_SIZE
 # Extract from TASKS_PER_NODE from SLURM_TASKS_PER_NODE (e.g. "72(x4)" -> "72")
 TASKS_PER_NODE=$(echo $SLURM_TASKS_PER_NODE | sed 's/\(.*\)(.*).*/\1/g;s/[^0-9]//g')
 NNODES="$SLURM_JOB_NUM_NODES"
-REPETITION="3"
+REPETITION="10"
 
 CORR_DISTS="{0,8}"
 FAULTS="0"
@@ -48,7 +48,10 @@ FAULTS="4"
 
 COMBINATIONS="$COMBINATIONS "$(eval echo "$TYPES+$NNODES+$CORR_DISTS+$FAULTS")
 
+# Baseline
 TYPES=Native
+CORR_DISTS="0"
+FAULTS="0"
 
 COMBINATIONS="$COMBINATIONS "$(eval echo "$TYPES+$NNODES+$CORR_DISTS+$FAULTS")
 
@@ -89,9 +92,7 @@ do
 	else
 	    PRELOAD_DYING=""
 	fi
-	OUT=$(srun $PRELOAD_DYING \
-		   --cpu_bind=core \
-		   -n $NPROC \
+	OUT=$(srun $PRELOAD_DYING --cpu_bind=core -n $NPROC \
 		   $OSU_DIR/osu_bcast -m $MSG_SIZE -f -i $ITERATION)
 	echo "$EXPERIMENT"
 	echo "$OUT"
