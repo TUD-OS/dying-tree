@@ -4,6 +4,9 @@ project(dying)
 find_package(MPI REQUIRED)
 include_directories(${MPI_C_INCLUDE_PATH})
 
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+SET_PROPERTY(GLOBAL PROPERTY TARGET_SUPPORTS_SHARED_LIBS TRUE)
+
 set(WRAP ${PROJECT_SOURCE_DIR}/wrap/wrap.py)
 include(wrap/WrapConfig.cmake)
 
