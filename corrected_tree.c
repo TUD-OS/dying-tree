@@ -1,9 +1,9 @@
+#include <assert.h>
 #include <stdbool.h>
 #include <stdlib.h>
 #include <stdio.h>
-#include <assert.h>
-#include <unistd.h>
 #include <string.h>
+#include <unistd.h>
 
 #include <mpi.h>
 
@@ -29,6 +29,22 @@ ffmk_get_msb(int num)
         ++msb;
     }
     return msb;
+}
+
+/* Test whether 'chil' is a child of 'parent' */
+static bool
+is_child(int const child, int const parent)
+{
+    assert(parent < child && "Wrong order of args!?");
+
+    int const len_rank = ffmk_get_msb(parent);
+
+    for (int cc = 0; ; ++cc) {
+        int const ch = parent + (1 << (len_rank + cc));
+
+        if (ch == child) { return true; }
+                if (ch > child)  { return false; }
+    }
 }
 
 /* Check received message and (potentially) update our view of the sender's epoch
@@ -150,7 +166,7 @@ ompi_coll_base_bcast_intra_corrected(void *buff, int count,
      */
     static bool *buff_fut = NULL;
 
-    /* Arrays used for 'Waitsome' */
+    /* Arrays used for 'Testsome'/'Waitsome' */
     static MPI_Status *statuses = NULL;
     static int        *indices  = NULL;
 
@@ -286,11 +302,12 @@ ompi_coll_base_bcast_intra_corrected(void *buff, int count,
              * We cannot use 'MPI_Startall' because we need to skip
              * 'MPI_REQUEST_NULL' requests since they are not allowed here:
              * "The argument, request, is a handle returned by one of the
-             * previous five calls."
+             * previous five calls." -- MPI standard
              */
             for (int cc = req_tree_rcv; cc < req_tree_snd; ++cc) {
                 if (reqs[cc] == MPI_REQUEST_NULL) { continue; }
-                PMPI_Start(&reqs[cc]);
+                err = PMPI_Start(&reqs[cc]);
+                if (MPI_SUCCESS != err) { return err; }
             }
 //             err = PMPI_Startall(req_tree_snd - req_tree_rcv, &reqs[req_tree_rcv]);
 //             if (MPI_SUCCESS != err) { return err; }
@@ -304,6 +321,18 @@ ompi_coll_base_bcast_intra_corrected(void *buff, int count,
     // Current epoch, limited to the size of a 'char' or rather 'epoch_wrap'
     // This is what we send around with the user's payload
     char const epoch_ltd = epoch_global % epoch_wrap;
+
+    /* Keep track which of our correction partners already sent a message to us
+     *
+     * This will be used for optimising the corr messages we send in the end.
+     * We only need to remember the distance to sending node closest to us as
+     * this will also cover the highest number of nodes we would need to send
+     * correction to.
+     *
+     * The variable needs to start living here, because available "future"
+     * messages might already affect it.
+     */
+    int corr_neigh = corr_dist; // init. value will allow for no optimisation
 
     if (rank == root) {
         // Add limited-size epoch to message (sacrificing part of user data)
@@ -341,17 +370,29 @@ ompi_coll_base_bcast_intra_corrected(void *buff, int count,
                 memcpy(buff, &buffers[idx * count_max], count);
                 done = true;
             }
+            // use the opportunity of two future messages to check for consistency
             else {
+                assert( (epoch_neigh[idx] % epoch_wrap) == buffers[idx * count_max] && "Future message with wrong epoch");
                 assert(0 == memcmp(buff, &buffers[idx * count_max], count * sizeof(char)) && "Differing payloads for same epoch");
             }
+
+            // This will have an effect on our own correction
+            // (unless the message is from our parent)
+            corr_neigh = (idx && idx < corr_neigh) ? idx : corr_neigh;
 
             // Reactivate the receive request, now that we caught up
             err = PMPI_Start(&reqs[req_tree_rcv + idx]);
             if (MPI_SUCCESS != err) { return err; }
-        }
+        } // end -- handle stored future messages for this epoch
 
-        /* Wait for somebody to send to us: drop stale messages, reactivate recvs,
-         * store user data once rcv'd and properly handle "future" corr messages
+        /* If we don't have the message for this epoch yet, wait for somebody to
+         * send it to us: drop stale messages, reactivate recvs, store the
+         * payload in the user's buffer once rcv'd and properly handle "future"
+         * corr messages
+         *
+         * Note that we will not see future tree messages here since we exit the
+         * loop once we have the current message and our parent does not skip
+         * epochs.
          */
         while (!done) {
             int completed = MPI_UNDEFINED; // better be safe and initialise it
@@ -364,17 +405,16 @@ ompi_coll_base_bcast_intra_corrected(void *buff, int count,
                                 &completed,          // outcount
                                 indices,             // array of indices
                                 statuses);           // array of statuses
-            assert(completed != MPI_UNDEFINED && "No active requests!?");
-
-            // Do *not* check 'status.MPI_ERROR' as it is not set - see section 3.2.5 of MPI 3.0
             if (MPI_SUCCESS != err) { return err; }
+
+            assert(completed != MPI_UNDEFINED && "No active requests!?");
 
             /* Handle *all* completed requests */
             for (int cc = 0; cc < completed; ++cc) {
                 int        const idx    = indices[cc];
                 MPI_Status const status = statuses[cc];
 
-                assert(idx == (status.MPI_SOURCE == parent ? 0 : rank - status.MPI_SOURCE) && "Unexpected index");
+                assert(idx == (status.MPI_SOURCE == parent ? 0 : rank - status.MPI_SOURCE) && "Unexpected index for sender");
 
                 /* Note that 'idx' "incidentally" corresponds to the sender rank's
                  * entries not only in 'reqs' but also 'buffers' and 'epoch_neigh'.
@@ -390,7 +430,7 @@ ompi_coll_base_bcast_intra_corrected(void *buff, int count,
 
                 // We actually got the right message, so...
                 if (matches) {
-                    // ... store it in the user's if we didn't have a match before
+                    // ... store it in the user's buffer if we didn't have a match before
                     if (!done) {
                         memcpy(buff, &buffers[idx * count_max], count);
                         done = true;
@@ -400,26 +440,34 @@ ompi_coll_base_bcast_intra_corrected(void *buff, int count,
                         assert(0 == memcmp(buff, &buffers[idx * count_max], count * sizeof(char)) && "Differing payloads for same epoch");
                     }
 
-                    // Note: This *must* be done before we reactivate the send! Races...
+                    // Note: The previous *must* be done before we reactivate the send! Races...
+
+                    // This will have an effect on our own correction
+                    // (unless the message came from our parent)
+                    corr_neigh = (idx && idx < corr_neigh) ? idx : corr_neigh;
                 }
                 // Future message
                 // Note: Nothing special to do for stale messages
-                else if (!matches && epoch_neigh[idx] > epoch_global) {
+                else if (epoch_neigh[idx] > epoch_global) {
                     assert(idx != 0 && "Future tree message from parent");
 
                     buff_fut[idx] = true;
-                    continue; // do *not* reactivate the rcv
+                    continue; // do *not* reactivate the rcv or increase the epoch
                 }
 
-                // Reactivate completed recv
+                // Reactivate the completed recv
                 err = PMPI_Start(&reqs[req_tree_rcv + idx]);
                 if (MPI_SUCCESS != err) { return err; }
 
                 // Next time, we expect the next epoch from him, of course
                 ++epoch_neigh[idx];
             } // end -- handle completed requests
-        } // end -- while (!done)
+        } // end -- wait for a message for this epoch
     } // end -- if (non-root rank)
+
+
+    // At this point, 'buff' unconditionally contains the user's data. The
+    // first 'char' has been overwritten with our (limited) epoch.
 
 
     /* Bulk-send tree messages to all our children
@@ -430,16 +478,15 @@ ompi_coll_base_bcast_intra_corrected(void *buff, int count,
         assert(len_rank + offset + 1 <= len_tree && "Too many children");
 
         int const child = rank + (1 << (len_rank + offset));
+        assert(is_child(child, rank) && "Inconsistent children");
 
         // handle non-full tree
         if (child >= size) { break; }
 
-        // At this point, 'buff' unconditionally contains the user's data. The
-        // first 'char' has been overwritten with our (limited) epoch.
         assert(req_tree_snd + offset < req_corr_snd && "Too many tree snds");
         err = PMPI_Isend(buff,
                          count,
-                         MPI_CHAR,
+                         datatype,
                          child,
                          MCA_COLL_BASE_TAG_BCAST,
                          comm,
@@ -447,82 +494,62 @@ ompi_coll_base_bcast_intra_corrected(void *buff, int count,
         if (MPI_SUCCESS != err) { return err; }
     }
 
-    /* Send correction messages to our 'corr_dist' right neighbours
+        /* Send correction messages to our 'corr_dist' right neighbours
      *
      * Do not send to our children or to root (implicitly since it's either to
      * our "left" or "beyond the chain" as we don't close the ring).
      *
-     * As a (possible) optimisation, we send correction one by one. Also, we
-     * ommit corr messages to those ranks that we know will be covered be others
+     * As a (possible) optimisation, we send corrections one by one, omitting
+     * corr messages to those ranks that we know will be covered be others
      * (that already sent to us).
      *
      * Example: (R-3) (R-2) (R-1)  (R)  (R+1) (R+2) (R+3)
      *
-     * If we received from (R-1) and 'corr_dist' == 3, we know (R-1) will also
-     * send corr to (R+1) and (R+2).
+     * If we (R) received from (R-1) and 'corr_dist' == 3, we know (R-1) will
+     * also send corr to (R+1) and (R+2), so we only send to (R+3).
      *
-     * Note that we do *not* try to receive from our parent. First, we don't
-     * want "future" messages from him. Second, we'd need to special-case as
-     * those are not corr messages.
+     * Note that we might already have received corr messages before, so
+     * consider 'corr_neigh' which gives the distance to the closest rank
+     * we received correction from for this epoch.
      */
-    for (int offset = 1; offset <= corr_dist; ++offset) {
-        int const receiver = rank + offset; // send to right
 
-//         if (send_over_root) {
-//             receiver = (receiver + size) % size;
-//             if (receiver == root) {continue;}
-//         }
+    assert(corr_neigh > 0 && corr_neigh <= corr_dist && "Optimisation broken");
 
-        if (receiver >= size) { break; }
+    bool first = true; // first round in the correction phase?
 
-        // Do not send to children
-        for (int cc = 0; cc < num_child; ++cc) {
-            assert(len_rank + cc + 1 <= len_tree && "Too many children");
+    for (int offset = 0; offset <= corr_dist; /* noop */) {
+        bool done = first; // sent of current corr message done? (no message is being sent in the first round!)
 
-            int const child = rank + (1 << (len_rank + cc));
-
-            if (child == receiver) { goto end_corr_loop; }
-        }
-
-        err = PMPI_Isend(buff,
-                         count,
-                         datatype,
-                         receiver,
-                         MCA_COLL_BASE_TAG_BCAST,
-                         comm,
-                         &reqs[req_corr_snd + offset - 1]);
-        if (MPI_SUCCESS != err) { return err; }
-
-        bool done = false; // was the current corr message sent?
-
-        // (highest) offset of any rank that sent us correction in the
-        // current round
-        int sender_offset = 0;
-
-        while (!done) {
+        do {
             int completed = MPI_UNDEFINED; // better be safe and initialise it
 
             /* It's fine to use all reqs since irrelevant ones are set to
              * 'MPI_REQUEST_NULL' or inactive and thus will be ignored :-)
              */
-            err = PMPI_Waitsome(req_past_end - req_corr_rcv, // incount
-                                &reqs[req_corr_rcv], // array of requests
-                                &completed,          // outcount
-                                indices,             // array of indices
-                                statuses);           // array of statuses
+            if (first) {
+                // do not wait, just check if messages already arrived
+                err = PMPI_Testsome(req_past_end - req_tree_rcv, // incount
+                                    &reqs[req_tree_rcv], // array of requests
+                                    &completed,          // outcount
+                                    indices,             // array of indices
+                                    statuses);           // array of statuses
+                first = false;
+            }
+            else {
+                err = PMPI_Waitsome(req_past_end - req_tree_rcv, // incount
+                                    &reqs[req_tree_rcv], // array of requests
+                                    &completed,          // outcount
+                                    indices,             // array of indices
+                                    statuses);           // array of statuses
+            }
             assert(completed != MPI_UNDEFINED && "No active requests!?");
 
-            if (MPI_SUCCESS != err && MPI_ERR_IN_STATUS != err) { return err; };
+            if (MPI_SUCCESS != err && MPI_ERR_IN_STATUS != err) { return err; }
 
             /* Handle *all* completed requests */
             for (int cc = 0; cc < completed; ++cc) {
-                /* Beware an OBOE with index 'idx'
-                 *
-                 * We only waited for requests starting from 'req_corr_rcv'!
-                 * Compensate for that now so the right buffer + req is used.
-                 */
-                assert(indices[cc] >= 0 && "Waitsome broken!?");
-                size_t     const idx    = indices[cc] + req_corr_rcv;
+                assert(indices[cc] >= 0 && "Test/Waitsome broken!?");
+                size_t     const idx    = indices[cc];
                 MPI_Status const status = statuses[cc];
 
                 // send finished
@@ -537,11 +564,11 @@ ompi_coll_base_bcast_intra_corrected(void *buff, int count,
                     // That's all, just handle the next completion
                     continue;
                 }
-                // (corr) receive finished
+                // receive finished
                 else {
                     assert(MPI_SUCCESS == status.MPI_ERROR && "Failed recv (TODO really set properly in status!?)");
-                    assert(rank > status.MPI_SOURCE && "Correction from right neighbour");
-                    assert(idx == (size_t)(rank - status.MPI_SOURCE) && "Unexpected index");
+                    assert(rank > status.MPI_SOURCE && "Correction from right neighbour (or weird/small parent rank)");
+                    assert(idx == (status.MPI_SOURCE == parent ? 0 : rank - status.MPI_SOURCE) && "Unexpected index for sender");
 
                     /* Note that 'idx' "incidentally" corresponds to the sender rank's
                      * entries not only in 'reqs' but also 'buffers' and 'epoch_neigh'.
@@ -560,17 +587,18 @@ ompi_coll_base_bcast_intra_corrected(void *buff, int count,
                         // Note: This *must* be done before we reactivate the send! Races...
                         assert(0 == memcmp(buff, &buffers[idx * count_max], count * sizeof(char)) && "Differing payloads for same epoch");
 
-                        // keep track of the highest sender offset
+                        // keep track of the closest sender
+                        // (unless the message came from our parent)
                         // Note: 'idx' "conincidentely" is our distance from the sender
-                        sender_offset = (sender_offset > idx ? sender_offset : idx);
+                        corr_neigh = (idx && idx < corr_neigh) ? idx : corr_neigh;
                     }
                     // Future message
                     // Note: Nothing special to do for stale messages
-                    else if (!matches && epoch_neigh[idx] > epoch_global) {
+                    else if (epoch_neigh[idx] > epoch_global) {
                         buff_fut[idx] = true;
-                        continue; // do *not* reactivate the rcv, handle next completion
+                        continue; // do *not* reactivate the rcv or increase epoch, handle next completion
                     }
-                } // end -- corr recv
+                } // end -- recv
 
                 // Reactivate completed recv
                 err = PMPI_Start(&reqs[req_tree_rcv + idx]);
@@ -579,30 +607,53 @@ ompi_coll_base_bcast_intra_corrected(void *buff, int count,
                 // Next time, we expect the next epoch from him, of course
                 ++epoch_neigh[idx];
             } // end -- handle completed requests
-        } // end -- while (current corr message not sent)
+        } while (!done); // end -- while (current corr message not sent)
 
         /* Our current corr message has been sent now. Before considering the
          * next corr message, update 'offset' so ranks covered by anybody who
-         * sent to us is not bothered by us as well.
+         * sent to us are not bothered by us as well. The other guy will be
+         * faster anyway.
          *
          * Skip this optimisation at the start of new hyper epochs. There we
          * *always* send corrections to maintain the sync between different
          * ranks.
          *
-         * Note: 'offset' indicates the rank we just sent to.
-         *       It's increased in the loop header before the
-         *       next send or test for corr completion.
+         * Note: 'offset' indicates the distance to the rank we just sent to.
          */
         if (epoch_ltd) {
-            int const handled_by_sender = corr_dist - sender_offset;
-            offset = (offset > handled_by_sender ? offset : handled_by_sender);
+            int const handled_by_sender = corr_dist - corr_neigh;
+            offset = (offset > handled_by_sender) ? offset : handled_by_sender;
         }
 
-end_corr_loop:
-        ;
-    }
+        int receiver;
 
-    /* Wait for all (remaining) sends to finish, just ignore the return value
+        do {
+            ++offset;
+            receiver = rank + offset; // send to right
+        } while (is_child(receiver, rank)); // Do not send to children
+
+//         if (send_over_root) {
+//             receiver = (receiver + size) % size;
+//             if (receiver == root) {continue;}
+//         }
+
+        // Handle end of the chain
+        if (receiver >= size) { break; }
+
+        err = PMPI_Isend(buff,
+                         count,
+                         datatype,
+                         receiver,
+                         MCA_COLL_BASE_TAG_BCAST,
+                         comm,
+                         &reqs[req_corr_snd + offset - 1]);
+        if (MPI_SUCCESS != err) { return err; }
+
+    } // end -- cover 'corr_dist' neighbours with 'offset'
+
+
+    /* Wait for all (remaining) sends to finish since 'buff' may change after
+     * we return to the user. Just ignore the return value as sends may fail.
      *
      * Again, it's ok to use all send reqs since irrelevant ones are set to
      * 'MPI_REQUEST_NULL' and thus will be ignored :-)
