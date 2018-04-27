@@ -232,7 +232,7 @@ ompi_coll_base_bcast_intra_corrected(void *buff, int count,
         //       prototype, you know ;-)
 
         // Dedicated buffers for each of the receives; 'count_max' entries each
-        buffers = malloc( (1 + corr_dist) * count_max * sizeof(char) );
+        buffers = malloc( 2* (1 + corr_dist) * count_max * sizeof(char) );
         if (!buffers) { return MPI_ERR_NO_MEM; }
 
         /* For our parent and each of our "correction neighbours" we store the
@@ -241,15 +241,15 @@ ompi_coll_base_bcast_intra_corrected(void *buff, int count,
          * If there has already been a "future message", we remember the epoch
          * of that message, which is held in the neighbour's rcv buffer.
          */
-        epoch_neigh = calloc(1 + corr_dist, sizeof(long long));
+        epoch_neigh = calloc(2* (1 + corr_dist), sizeof(long long));
         if (!epoch_neigh) { return MPI_ERR_NO_MEM; }
 
         // Flags to keep track of already-received future messages
-        buff_fut = calloc(1 + corr_dist, sizeof(bool));
+        buff_fut = calloc(2* (1 + corr_dist), sizeof(bool));
         if (!buff_fut) { return MPI_ERR_NO_MEM; }
 
         /* Request objects for all sends + receives (init to 'MPI_REQUEST_NULL'!) */
-        reqs = malloc( (1 + num_child + 2 * corr_dist) * sizeof(MPI_Request) );
+        reqs = malloc( 2* (1 + num_child + 2 * corr_dist) * sizeof(MPI_Request) );
         if (!reqs) { return MPI_ERR_NO_MEM; }
 
         for (int cc=0; cc<1 + num_child + 2 * corr_dist; ++cc) {
@@ -257,9 +257,9 @@ ompi_coll_base_bcast_intra_corrected(void *buff, int count,
         }
 
         /* Arrays for 'Waitsome' */
-        statuses  = malloc( (1 + num_child + 2 * corr_dist) * sizeof(MPI_Status) );
+        statuses  = malloc( 2* (1 + num_child + 2 * corr_dist) * sizeof(MPI_Status) );
         if (!statuses) { return MPI_ERR_NO_MEM; }
-        indices = malloc( (1 + num_child + 2 * corr_dist) * sizeof(int) );
+        indices = malloc( 2* (1 + num_child + 2 * corr_dist) * sizeof(int) );
         if (!indices) { return MPI_ERR_NO_MEM; }
 
         assert(reqs && epoch_neigh && buff_fut && buffers && statuses && indices && "Memory not properly allocated.");
