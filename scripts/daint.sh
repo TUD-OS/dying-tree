@@ -31,8 +31,8 @@ TYPES=Corrected
 ITERATION=1000
 MSG_SIZE="2048"
 CORR_COUNT_MAX=$MSG_SIZE
-# Extract from TASKS_PER_NODE from SLURM_TASKS_PER_NODE (e.g. "72(x4)" -> "4")
-TASKS_PER_NODE=$(echo $SLURM_TASKS_PER_NODE | sed 's/.*(\(.*\)).*/\1/g;s/[^0-9]//g')
+# Extract from TASKS_PER_NODE from SLURM_TASKS_PER_NODE (e.g. "72(x4)" -> "72")
+TASKS_PER_NODE=$(echo $SLURM_TASKS_PER_NODE | sed 's/\(.*\)(.*).*/\1/g;s/[^0-9]//g')
 NNODES="$SLURM_JOB_NUM_NODES"
 REPETITION="3"
 
