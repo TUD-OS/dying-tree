@@ -35,7 +35,8 @@ ffmk_get_msb(int num)
 static bool
 is_child(int const child, int const parent)
 {
-    assert(parent < child && "Wrong order of args!?");
+    assert(parent >= 0 && child >= 0 && "Negative tree ids");
+    assert(parent < child && "Wrong order of args?");
 
     int const len_rank = ffmk_get_msb(parent);
 
@@ -513,7 +514,8 @@ ompi_coll_base_bcast_intra_corrected(void *buff, int count,
      * we received correction from for this epoch.
      */
 
-    assert(corr_neigh > 0 && corr_neigh <= corr_dist && "Optimisation broken");
+    assert(corr_neigh <= corr_dist && "Optimisation broken");
+    assert((corr_neigh > 0 || !corr_dist) && "Optimisation broken");
 
     bool first = true; // first round in the correction phase?
     int offset = 0;
