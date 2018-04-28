@@ -82,21 +82,22 @@ do
 	OUTFILE="$OUTDIR/$EXPERIMENT+$i"
 	# Rank zero may never die
 	DYING_LIST=($(shuf -i 1-$(($NPROC - 1)) -n $FAULT))
-	DYING_LIST=$(IFS=','; echo "${DYING_LIST[*]}")
+	DYING_LIST=$(IFS=';'; echo "${DYING_LIST[*]}")
 
 	export DYING_LIST
 	export CORR_DIST
 	export CORR_COUNT_MAX
+	EXPORT="--export=DYING_LIST=$DYING_LIST,CORR_DIST=$CORR_DIST,CORR_COUNT_MAX=$CORR_COUNT_MAX"
 	if [[ "$TYPE" == 'Corrected' ]] ; then
-	    PRELOAD_DYING="--export=LD_PRELOAD=$DYING_LIB"
-	else
-	    PRELOAD_DYING=""
+	    EXPORT="$EXPORT,LD_PRELOAD=$DYING_LIB"
 	fi
-	OUT=$(srun $PRELOAD_DYING --cpu_bind=core -n $NPROC \
-		   $OSU_DIR/osu_bcast -m $MSG_SIZE -f -i $ITERATION)
-	echo "$EXPERIMENT"
-	echo "$OUT"
+
 	echo "$TYPE	$CORR_DIST	$NPROC	$NNODES	$i	$DYING_LIST" > $OUTFILE
+	echo "$EXPERIMENT"
+
+	OUT=$(srun $EXPORT --cpu_bind=core -n $NPROC -x 0 \
+		   $OSU_DIR/osu_bcast -m $MSG_SIZE -f -i $ITERATION)
+	echo "$OUT"
 	echo "$OUT"  | tail -n +3 >> $OUTFILE
     done
 done
