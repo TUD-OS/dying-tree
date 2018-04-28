@@ -547,6 +547,15 @@ ompi_coll_base_bcast_intra_corrected(void *buff, int count,
             }
             assert(completed != MPI_UNDEFINED && "No active requests!?");
 
+            /* From the MPI standard:
+             * "The call will return the error code MPI_ERR_IN_STATUS and the
+             *  error field of each status returned will be set to indicate
+             *  success or to indicate the specific error that occurred.
+             *  The call will return MPI_SUCCESS if no request resulted in an
+             *  error, and will return another error code if it failed for other
+             *  reasons (such as invalid arguments). In such cases, it will not
+             *  update the error fields of the statuses."
+             */
             if (MPI_SUCCESS != err && MPI_ERR_IN_STATUS != err) { return err; }
 
             /* Handle *all* completed requests */
@@ -569,7 +578,7 @@ ompi_coll_base_bcast_intra_corrected(void *buff, int count,
                 }
                 // receive finished
                 else {
-                    assert(MPI_SUCCESS == status.MPI_ERROR && "Failed recv (TODO really set properly in status!?)");
+                    assert( (MPI_SUCCESS == err || MPI_SUCCESS == status.MPI_ERROR) && "Failed recv");
                     assert(rank > status.MPI_SOURCE && "Correction from right neighbour (or weird/small parent rank)");
                     assert(idx == (status.MPI_SOURCE == parent ? 0 : rank - status.MPI_SOURCE) && "Unexpected index for sender");
 
