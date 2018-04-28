@@ -13,12 +13,8 @@ static MPI_Comm MPI_COMM_LIVING_WORLD;
 int will_die = 0;
 
 
-int read_env_will_die()
+int read_env_will_die(int rank)
 {
-  int rank;
-
-  PMPI_Comm_rank(MPI_COMM_WORLD, &rank);
-
   const char *dying_list = read_env_or_fail("DYING_LIST");
 
   /* Traverse dying_list, check oneself */
@@ -44,7 +40,9 @@ void die_if_needed()
 
   PMPI_Comm_rank(MPI_COMM_WORLD, &rank);
 
-  will_die = read_env_will_die();
+  will_die = read_env_will_die(rank);
+  corrected_corr_dist = read_env_int("CORR_DIST");
+  corrected_count_max = read_env_int("CORR_COUNT_MAX");
 
   /* Create two communicators. New world for all operations except the
      broadcast. The old comm world will be used for the corrected
