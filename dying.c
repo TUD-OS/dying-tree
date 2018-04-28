@@ -24,7 +24,7 @@ int read_env_will_die(int rank)
     if (dying_rank == rank && ret) {
       return 1;
     }
-    dying_list = strchr(dying_list, ',');
+    dying_list = strchr(dying_list, ';');
     /* Can't find a comma, hence the end of the list */
     if (!dying_list) break;
 
