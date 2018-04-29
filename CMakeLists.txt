@@ -16,6 +16,7 @@ set(CMAKE_INCLUDE_CURRENT_DIR ON)
 add_wrapped_file(dying_wrap.h dying_wrap.w)
 add_library(dying SHARED
   dying.c
+  util.c
   corrected_tree.c
   dying_wrap.h)
 target_link_libraries(dying ${MPI_C_LIBRARIES})

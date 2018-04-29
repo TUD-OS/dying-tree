@@ -6,23 +6,12 @@
 #include <string.h>
 
 #include "dying.h"
+#include "util.h"
 #include "corrected_tree.h"
 
 static MPI_Comm MPI_COMM_LIVING_WORLD;
 int will_die = 0;
 
-const char *read_env_or_fail(const char *var_name)
-{
-  const char *var = getenv(var_name);
-
-  if (!var) {
-    fprintf(stderr, "Variable %s is unset\n", var_name);
-    PMPI_Abort(MPI_COMM_WORLD, -1);
-    /* no return */
-  }
-
-  return var;
-}
 
 int read_env_will_die()
 {
@@ -49,16 +38,6 @@ int read_env_will_die()
   return 0;
 }
 
-int read_env_int(const char *var_name)
-{
-  const char *var = read_env_or_fail(var_name);
-
-  int res;
-  sscanf(var, "%d", &res);
-
-  return res;
-}
-
 void die_if_needed()
 {
   int rank;
@@ -66,8 +45,6 @@ void die_if_needed()
   PMPI_Comm_rank(MPI_COMM_WORLD, &rank);
 
   will_die = read_env_will_die();
-  corrected_corr_dist = read_env_int("CORR_DIST");
-  corrected_count_max = read_env_int("CORR_COUNT_MAX");
 
   /* Create two communicators. New world for all operations except the
      broadcast. The old comm world will be used for the corrected
