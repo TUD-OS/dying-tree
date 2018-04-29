@@ -4,7 +4,7 @@
 {{endfn}}
 
 {{fn fn_name MPI_Finalize}}
-     // dying_finalize();
+     dying_finalize();
      {{callfn}}
 {{endfn}}
 

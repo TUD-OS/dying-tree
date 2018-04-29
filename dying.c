@@ -68,7 +68,11 @@ void dying_finalize()
   PMPI_Comm_rank(MPI_COMM_WORLD, &rank);
   fflush(stdout);
   fflush(stderr);
-  PMPI_Abort(MPI_COMM_SELF, 0);
+  if (rank == 0) {
+    PMPI_Abort(MPI_COMM_SELF, 0);
+  } else {
+    exit(0);
+  }
   /* kill(getpid(), SIGTERM); */
 }
 
