@@ -96,7 +96,7 @@ do
 	echo "$EXPERIMENT"
 
 	OUT=$(srun $EXPORT --cpu_bind=core -n $NPROC -x 0 \
-		   $OSU_DIR/osu_bcast -m $MSG_SIZE -f -i $ITERATION)
+		   $OSU_DIR/osu_bcast -m $MSG_SIZE -f -i $ITERATION 2>/dev/null)
 	echo "$OUT"
 	echo "$OUT"  | tail -n +3 >> $OUTFILE
     done

@@ -9,10 +9,10 @@ void corrt_statistics_print();
 {{endfn}}
 
 {{fn fn_name MPI_Finalize}}
-     // dying_finalize();
      #ifdef CORRT_DO_STATISTICS
        corrt_statistics_print();
      #endif
+     dying_finalize();
      {{callfn}}
 {{endfn}}
 
