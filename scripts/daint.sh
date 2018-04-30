@@ -1,6 +1,6 @@
 #!/bin/bash -l
-#SBATCH --time 00:30:00
-#SBATCH --nodes 24
+#SBATCH --time 01:00:00
+#SBATCH --nodes 192
 #SBATCH --constraint=mc
 #SBATCH --mail-type=ALL
 #SBATCH --mail-user=mplaneta@os.inf.tu-dresden.de
@@ -37,16 +37,16 @@ TASKS_PER_NODE=$(echo $SLURM_TASKS_PER_NODE | sed 's/\(.*\)(.*).*/\1/g;s/[^0-9]/
 NNODES="$SLURM_JOB_NUM_NODES"
 REPETITION="10"
 
-CORR_DISTS="{0,8}"
+CORR_DISTS="{0,2,4,8}"
 FAULTS="0"
 
 COMBINATIONS=$(eval echo "$TYPES+$NNODES+$CORR_DISTS+$FAULTS")
 
 # Faults
-CORR_DISTS="8"
-FAULTS="4"
+CORR_DISTS="{4,8}"
+FAULTS="288"
 
-COMBINATIONS="$COMBINATIONS "$(eval echo "$TYPES+$NNODES+$CORR_DISTS+$FAULTS")
+# COMBINATIONS="$COMBINATIONS "$(eval echo "$TYPES+$NNODES+$CORR_DISTS+$FAULTS")
 
 # Baseline
 TYPES=Native
@@ -82,6 +82,7 @@ do
 	OUTFILE="$OUTDIR/$EXPERIMENT+$i"
 	# Rank zero may never die
 	DYING_LIST=($(shuf -i 1-$(($NPROC - 1)) -n $FAULT))
+	# DYING_LIST=($(seq 1 $FAULT))
 	DYING_LIST=$(IFS=';'; echo "${DYING_LIST[*]}")
 
 	export DYING_LIST
