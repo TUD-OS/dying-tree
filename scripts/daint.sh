@@ -30,14 +30,17 @@ OSU_DIR=$BASE/osu-micro-benchmarks-5.4.1/mpi/collective/
 ## Fault free case
 TYPES=Corrected
 ITERATION=1000
-MSG_SIZE="2048"
+MSG_SIZE="256"
 CORR_COUNT_MAX=$MSG_SIZE
 # Extract from TASKS_PER_NODE from SLURM_TASKS_PER_NODE (e.g. "72(x4)" -> "72")
 TASKS_PER_NODE=$(echo $SLURM_TASKS_PER_NODE | sed 's/\(.*\)(.*).*/\1/g;s/[^0-9]//g')
 NNODES="$SLURM_JOB_NUM_NODES"
 REPETITION="10"
+TREE_TYPE=binomial
+TREE_LAMKE_K=1
 
 CORR_DISTS="{0,2,4,8}"
+CORR_DISTS="0"
 FAULTS="0"
 
 COMBINATIONS=$(eval echo "$TYPES+$NNODES+$CORR_DISTS+$FAULTS")
@@ -88,7 +91,9 @@ do
 	export DYING_LIST
 	export CORR_DIST
 	export CORR_COUNT_MAX
-	EXPORT="--export=DYING_LIST=$DYING_LIST,CORR_DIST=$CORR_DIST,CORR_COUNT_MAX=$CORR_COUNT_MAX"
+	export TREE_TYPE
+	export TREE_LAME_K
+	EXPORT="--export=DYING_LIST=$DYING_LIST,CORR_DIST=$CORR_DIST,CORR_COUNT_MAX=$CORR_COUNT_MAX,TREE_TYPE=$TREE_TYPE,TREE_LAMKE_K=$TREE_LAME_K"
 	if [[ "$TYPE" == 'Corrected' ]] ; then
 	    EXPORT="$EXPORT,LD_PRELOAD=$DYING_LIB"
 	fi
@@ -96,7 +101,7 @@ do
 	echo "$TYPE	$CORR_DIST	$NPROC	$NNODES	$i	$DYING_LIST" > $OUTFILE
 	echo "$EXPERIMENT"
 
-	OUT=$(srun $EXPORT --cpu_bind=core -n $NPROC -x 0 \
+	OUT=$(srun $EXPORT --cpu_bind=core -n $NPROC \
 		   $OSU_DIR/osu_bcast -m $MSG_SIZE -f -i $ITERATION 2>/dev/null)
 	echo "$OUT"
 	echo "$OUT"  | tail -n +3 >> $OUTFILE
