@@ -32,6 +32,9 @@ dirs <- c('13-24-51_290418.25577', '14-32-00_290418.4021')
 
 dirs <- c('15-52-11_290418.6415', '16-27-39_290418.11716')
 
+
+dirs <- c('08-40-37_020518.5448', '10-04-51_020518.21567')
+
 plot.avg <- function(df) {
     breaks <- unique(df$Size)
     nodes <- unique(df$Nproc)
@@ -92,11 +95,29 @@ plot.smooth <- function(df) {
 }
 
 pdf('/tmp/daint2.pdf', 11, 6)
+## for (plot.f in c(plot.avg, plot.med, plot.med.max)) {
+##     for (dir in dirs) {
+##         df <- read.csv(paste0('../logs/daint/', dir, '/table.csv'))  %>%
+##             group_by(CorrType, Corr, Nnodes, Nproc, FaultCount, Size) %>%
+##             filter(AvgTime <= quantile(AvgTime, 0.9)) %>%
+##             summarize(AvgTime.50 = median(AvgTime),
+##                       AvgTime.25 = quantile(AvgTime, .25),
+##                       AvgTime.75 = quantile(AvgTime, .75),
+##                       AvgTime.m = mean(AvgTime),
+##                       AvgTime.sd = sd(AvgTime),
+##                       MaxTime.50 = median(MaxTime),
+##                       MaxTime.25 = quantile(MaxTime, .25),
+##                       MaxTime.75 = quantile(MaxTime, .75)) %>%
+##             ungroup() %>%
+##             mutate(Corr = sprintf("%s (%s)", CorrType, Corr))
+##         print(plot.f(df))
+##     }
+## }
 for (plot.f in c(plot.avg, plot.med, plot.med.max)) {
     for (dir in dirs) {
         df <- read.csv(paste0('../logs/daint/', dir, '/table.csv'))  %>%
             group_by(CorrType, Corr, Nnodes, Nproc, FaultCount, Size) %>%
-            filter(AvgTime <= quantile(AvgTime, 0.9)) %>%
+            filter(Corr == 0) %>%
             summarize(AvgTime.50 = median(AvgTime),
                       AvgTime.25 = quantile(AvgTime, .25),
                       AvgTime.75 = quantile(AvgTime, .75),
@@ -107,25 +128,7 @@ for (plot.f in c(plot.avg, plot.med, plot.med.max)) {
                       MaxTime.75 = quantile(MaxTime, .75)) %>%
             ungroup() %>%
             mutate(Corr = sprintf("%s (%s)", CorrType, Corr))
-        print(plot.f(df))
-    }
-}
-for (plot.f in c(plot.avg, plot.med, plot.med.max)) {
-    for (dir in dirs) {
-        df <- read.csv(paste0('../logs/daint/', dir, '/table.csv'))  %>%
-            group_by(CorrType, Corr, Nnodes, Nproc, FaultCount, Size) %>%
-            filter(AvgTime <= quantile(AvgTime, 0.9)) %>%
-            summarize(AvgTime.50 = median(AvgTime),
-                      AvgTime.25 = quantile(AvgTime, .25),
-                      AvgTime.75 = quantile(AvgTime, .75),
-                      AvgTime.m = mean(AvgTime),
-                      AvgTime.sd = sd(AvgTime),
-                      MaxTime.50 = median(MaxTime),
-                      MaxTime.25 = quantile(MaxTime, .25),
-                      MaxTime.75 = quantile(MaxTime, .75)) %>%
-            ungroup() %>%
-            mutate(Corr = sprintf("%s (%s)", CorrType, Corr))
-        print(plot.f(filter(df, Size<=256)))
+        print(plot.f(filter(df, Size<=256)) + ylim(c(0, 50)))
     }
 }
 for (dir in dirs) {
