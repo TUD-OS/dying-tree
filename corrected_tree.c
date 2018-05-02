@@ -6,6 +6,7 @@
 #include <unistd.h>
 
 #include <mpi.h>
+#include "util.h"
 
 /******************************************************************************
  * Corrected trees broadcast implementation                                   *
@@ -15,8 +16,8 @@
  *
  * Approach taken from simulator
  */
-static int
-ffmk_get_msb(int num)
+static size_t
+get_msb(int num)
 {
     int msb = 0;
 
@@ -28,22 +29,174 @@ ffmk_get_msb(int num)
     return msb;
 }
 
-/* Test whether 'child' is a child of 'parent' */
 static bool
-is_child(int const child, int const parent)
+setup_tree_binomial(int const rank, int const comm_size,
+                    size_t *num_child, size_t *parent, size_t **children)
 {
-    assert(parent >= 0 && child >= 0 && "Negative tree ids");
-    assert(parent < child && "Wrong order of args?");
+    size_t const len_rank = get_msb(rank),     // length/bits of rank ID
+                 len_tree = get_msb(comm_size - 1); // max length/bits of rank IDs
 
-    int const len_rank = ffmk_get_msb(parent);
+    *num_child = len_tree - len_rank; // remaining bits = (max) children
+    *parent    = rank ? rank & ~(1 << (len_rank-1)) // drop MSB of rank ID to find our parent
+                      : (comm_size + 1); // "obviously faulty" value for root node
 
-    for (int cc = 0; ; ++cc) {
-        int const ch = parent + (1 << (len_rank + cc));
+    // no children -> no allocation
+    if (!*num_child) { return true; }
 
-        if (ch == child) { return true; }
-                if (ch > child)  { return false; }
+    // prepare child array
+    *children = malloc( *num_child * sizeof(size_t) );
+    if (!*children) { return false; }
+
+    // Child ranks are found by setting each unused bit above our MSB in turn
+    for (size_t cc=0; cc < *num_child; ++cc) {
+        assert(len_rank + cc + 1 <= len_tree && "Too many children");
+
+        (*children)[cc] = rank + (1 << (len_rank + cc));
+
+        // handle non-full tree
+        if ((*children)[cc] >= (unsigned)comm_size) {
+            *num_child = cc; // remember the new count (and implicitly exit loop)
+            *children = realloc(*children, *num_child); // trim child list (optional memory optimisation)
+        }
     }
+    return true;
 }
+
+// all setup_tree_lame_* functions taken from simulator (and adopted to C)
+static int
+setup_tree_lame_ready_to_send(int const t, int const k)
+{
+    if (t < 0) { return 0; }
+    if (t < k) { return 1; }
+
+    size_t idx = t - k;
+
+    // No STL available ... so implement our own simple std::vector
+    static size_t cache_size     = 0;    // number of entries
+    static size_t cache_capacity = 0;    // size of 'values' array
+    static int   *cache_values   = NULL; // malloc'd content array
+
+    // required value not cached yet
+    while (idx >= cache_size) {
+        unsigned const new_t     = cache_size + k;
+        int      const new_rts_1 = setup_tree_lame_ready_to_send(new_t - 1, k);
+        int      const new_rts_2 = setup_tree_lame_ready_to_send(new_t - k, k);
+
+        if (new_rts_1 < 0 || new_rts_2 < 0) { return -1; }
+
+        // need more space?
+        if (cache_size == cache_capacity) {
+            cache_capacity += k; // arbitrary value that seems to make sense :-)
+            cache_values = realloc(cache_values, cache_capacity);
+            if (!cache_values) { return -1; }
+        }
+
+        cache_values[cache_size] = new_rts_1 + new_rts_2;
+        ++cache_size;
+    }
+
+    return cache_values[idx];
+}
+
+static int
+setup_tree_lame_start(int const id, int const k)
+{
+    if (id == 0) { return 0; }
+
+    for (int t = 0; /* no test */; t++) {
+        if (setup_tree_lame_ready_to_send(t, k) > id) { return t; }
+    }
+
+    return -1; // here be dragons
+}
+
+static bool
+setup_tree_lame(int const rank, int const comm_size,
+                size_t *num_child, size_t *parent, size_t **children)
+{
+    int const k = read_env_int("TREE_LAME_K");
+    int parent_tmp = rank ? -1 : (comm_size + 1); // obvious fake parent for root, invalid one for others
+
+    *num_child = 0;
+
+    // Note: We could stop after looking at our own rank, but let's do all
+    //       so we can check consistency...
+    for (int sender = 0; sender < comm_size; ++sender) {
+        int lvl = setup_tree_lame_start(sender, k);
+        if (lvl < 0) { return false; }
+
+        while (true) {
+            int const rts = setup_tree_lame_ready_to_send(lvl + k - 1, k);
+            if (rts < 0) { return false; }
+
+            int const receiver = sender + rts;
+            if (receiver >= comm_size) { break; }
+
+            // found our parent node
+            if (rank == receiver) {
+                assert(parent_tmp < 0 && "There can be only one ... parent");
+                parent_tmp = sender;
+                break; // we don't care who our siblings are
+            }
+
+            // found one of our children
+            if (rank == sender) {
+                ++(*num_child);
+
+                // prepare/enlarge child array
+            // TODO: better allocation would be nice ... setup is a one-shot function though
+                *children = realloc(*children, *num_child * sizeof(size_t) );
+                if (!*children) { return false; }
+
+                (*children)[*num_child - 1] = receiver;
+            }
+        ++lvl;
+        }
+    }
+
+    assert(parent_tmp >= 0 && "No parent found");
+    *parent = parent_tmp;
+    return true;
+}
+
+
+/* Initialise all relevant tree parameters for this rank (second args line)
+ *
+ * Tree type is read from the environment.
+ */
+static bool
+setup_tree(int const rank, int const comm_size,
+           size_t *num_child, size_t *parent, size_t **children)
+{
+    assert(rank >= 0 && "Invalid rank");
+    assert(comm_size > 0 && "Invalid size");
+    assert(*num_child == 42 && *parent == 23 && *children == NULL && "Tree already initialised");
+
+    char const * const tree_type = read_env_or_fail("TREE_TYPE");
+
+    if (0 == strncmp(tree_type, "binomial", 8)) {
+        return setup_tree_binomial(rank, comm_size, num_child, parent, children);
+    }
+    if (0 == strncmp(tree_type, "lame", 4)) {
+        return setup_tree_lame(rank, comm_size, num_child, parent, children);
+    }
+
+    fprintf(stderr, "Unknown tree: '%s'\n", tree_type);
+    PMPI_Abort(MPI_COMM_WORLD, -1);
+    return false; // unreached
+}
+
+/* Test whether 'rank' is one of our children (i.e. is in the array)*/
+static bool
+is_child(size_t const rank, size_t const num_child, size_t const * const children)
+{
+    for (size_t cc = 0; cc < num_child; ++cc) {
+        assert(children[cc] > 0 && "Root is no child");
+        if (children[cc] == rank) { return true; }
+    }
+    return false;
+}
+
 
 /* Check received message and (potentially) update our view of the sender's epoch
  *
@@ -51,13 +204,13 @@ is_child(int const child, int const parent)
            'false' for stale or future messages
  */
 static bool
-ffmk_handle_receive(long long const        epoch_global,
-                    char      const        epoch_ltd,
-                    int       const        epoch_wrap,
-                    long long       *const epoch_neigh,
-                    char      const *const buffer)
+handle_receive(unsigned long long const        epoch_global,
+               char               const        epoch_ltd,
+               size_t             const        epoch_wrap,
+               unsigned long long       *const epoch_neigh,
+               char               const *const buffer)
 {
-    assert(epoch_global % epoch_wrap == epoch_ltd && "Wrong limited epoch");
+    assert(epoch_global % epoch_wrap == (unsigned char) epoch_ltd && "Wrong limited epoch");
 
     /* Messages (including tree messages from our parent) might be
      * stale, i.e. still left over from previous epochs. We also need
@@ -69,8 +222,8 @@ ffmk_handle_receive(long long const        epoch_global,
 
     assert(epoch_hyper_global >= epoch_hyper_neigh && "Neigbour is ahead");
     assert((epoch_hyper_global - epoch_hyper_neigh) <= 1 && "Neigbour is behind too far");
-    assert(epoch_hyper_global != epoch_hyper_neigh ||
-           epoch_ltd >= epoch_rcvd && "Neigbour is ahead");
+    assert((epoch_hyper_global != epoch_hyper_neigh ||
+            epoch_ltd >= epoch_rcvd) && "Neigbour is ahead");
 
     /* For the received epoch to be "correct" it needs to match our
      * limited epoch. However, since there might be *very* old messages
@@ -81,7 +234,6 @@ ffmk_handle_receive(long long const        epoch_global,
         *epoch_neigh = epoch_global; // also update the epoch of our neighbour!
         return true; // perfect match => up-to-date message
     }
-
 
     /* Stale or future message -> update the sender's epoch
      *
@@ -110,9 +262,15 @@ ompi_coll_base_bcast_intra_corrected(void *buff, int count,
                                      MPI_Comm comm)
 {
     static int const MCA_COLL_BASE_TAG_BCAST = 2342;
-    int corr_dist = read_env_int("CORR_DIST"),      // opportunistic correction distance
-        count_max = read_env_int("CORR_COUNT_MAX"), // maximum allowed message size
-        epoch_wrap = 128; // value at which the local epoch wraps
+
+    int i_corr_dist = read_env_int("CORR_DIST"),
+        i_count_max = read_env_int("CORR_COUNT_MAX");
+    assert(i_corr_dist >= 0 && "Negative correction distance");
+    assert(i_count_max >= 0 && "Negative maximum message size");
+
+    size_t const corr_dist  = (size_t) i_corr_dist, // opportunistic correction distance
+                 count_max  = (size_t) i_count_max, // maximum allowed message size
+                 epoch_wrap = 128; // value at which the local epoch wraps
 
     /* Reject unexpected parameters ... it's only a prototype after all
      *
@@ -120,7 +278,7 @@ ompi_coll_base_bcast_intra_corrected(void *buff, int count,
      * trasmit the epoch. In a real implementation this would instead be part
      * of OMPI's internal metadata that establishes message order anyways.
      */
-    if (root != 0 || datatype != MPI_CHAR || count < 1 || count > count_max || comm != MPI_COMM_WORLD) {
+    if (root != 0 || datatype != MPI_CHAR || count < 1 || (size_t)count > count_max || comm != MPI_COMM_WORLD) {
         return MPI_ERR_INTERN;
     }
 
@@ -133,7 +291,7 @@ ompi_coll_base_bcast_intra_corrected(void *buff, int count,
      */
 
     // Current epoch or broadcast round
-    static long long epoch_global = 0;
+    static unsigned long long epoch_global = 0;
 
     /* Request objects for sends and receives; see also 'req_*' below for
      * more info about the structure */
@@ -153,7 +311,7 @@ ompi_coll_base_bcast_intra_corrected(void *buff, int count,
      *
      * The indices are consistent with those in 'buffers'.
      */
-    static long long *epoch_neigh = NULL;
+    static unsigned long long *epoch_neigh = NULL;
 
     /* Does the respective rank's entry in 'buffers' contain valid data?
      *
@@ -167,6 +325,11 @@ ompi_coll_base_bcast_intra_corrected(void *buff, int count,
     static MPI_Status *statuses = NULL;
     static int        *indices  = NULL;
 
+    /* Tree structure */
+    static size_t num_child = 42,   // number of child ranks
+                  parent    = 23,   // rank of our parent
+                  *children = NULL; // array of child ranks
+
     /* ==== end of static info ============================================== */
 
     int size, rank;
@@ -176,11 +339,18 @@ ompi_coll_base_bcast_intra_corrected(void *buff, int count,
     if (1 == size) { return MPI_SUCCESS; }
 
 
-    /* Determine number of our children */
-    int const len_rank  = ffmk_get_msb(rank),     // length/bits of rank ID
-              len_tree  = ffmk_get_msb(size - 1), // max length/bits of rank IDs
-              num_child = len_tree - len_rank,    // remaining bits = children
-              parent    = rank & ~(1 << (len_rank-1)); // drop MSB of rank ID to find our parent
+
+    /* On the first call to this function, i.e. the very first bcast, prepare
+     * basic information for the tree to be used.
+     */
+    if (epoch_global == 0) {
+        assert(!children && "Child list allocated!?");
+
+        if (!setup_tree(rank, size, &num_child, &parent, &children)) {
+            return MPI_ERR_NO_MEM;
+        }
+    }
+    assert((!num_child || children) && "Child list not properly allocated.");
 
     /* Principle structure of the 'reqs' array of request objects:
      *
@@ -263,6 +433,8 @@ ompi_coll_base_bcast_intra_corrected(void *buff, int count,
 
         // Non-root ranks expect to receive ...
         if (rank != root) {
+            assert(parent < (unsigned)rank && "Invalid parent");
+
             // ... a tree message from their parent
             err = PMPI_Recv_init(&buffers[req_tree_rcv * count_max],
                                  count_max,
@@ -275,14 +447,14 @@ ompi_coll_base_bcast_intra_corrected(void *buff, int count,
 
 
             // ... correction messages from their 'corr_dist' left neighbours
-            for (int offset = 0; offset < corr_dist; ++offset) {
-                int const sender = rank - (offset + 1); // receive from left
-
-                // we never get corr messages from our parent
-                if (sender == parent) { continue; }
+            for (size_t offset = 0; offset < corr_dist; ++offset) {
+                ssize_t const sender = rank - (offset + 1); // receive from left
 
                 // handle ranks close to start of the chain
                 if (sender < 0) { break; }
+
+                // we never get corr messages from our parent
+                if ((size_t)sender == parent) { continue; }
 
                 err = PMPI_Recv_init(&buffers[(req_corr_rcv + offset) * count_max],
                                      count_max,
@@ -301,7 +473,7 @@ ompi_coll_base_bcast_intra_corrected(void *buff, int count,
              * "The argument, request, is a handle returned by one of the
              * previous five calls." -- MPI standard
              */
-            for (int cc = req_tree_rcv; cc < req_tree_snd; ++cc) {
+            for (size_t cc = req_tree_rcv; cc < req_tree_snd; ++cc) {
                 if (reqs[cc] == MPI_REQUEST_NULL) { continue; }
                 err = PMPI_Start(&reqs[cc]);
                 if (MPI_SUCCESS != err) { return err; }
@@ -311,7 +483,7 @@ ompi_coll_base_bcast_intra_corrected(void *buff, int count,
         }
     }
 
-    assert(reqs && epoch_neigh && buff_fut && buffers && statuses && indices && "Memory not properly allocated.");
+    assert(reqs && epoch_neigh && buff_fut && buffers && statuses && indices && (!num_child || children) && "Memory not properly allocated.");
     assert( (rank != root || (MPI_REQUEST_NULL == reqs[req_tree_rcv]) ) && "Root with active tree recv");
     assert( (rank == root || (MPI_REQUEST_NULL != reqs[req_tree_rcv]) ) && "Non-root w/o active tree recv");
 
@@ -329,7 +501,7 @@ ompi_coll_base_bcast_intra_corrected(void *buff, int count,
      * The variable needs to start living here, because available "future"
      * messages might already affect it.
      */
-    int corr_neigh = corr_dist; // init. value will allow for no optimisation
+    size_t corr_neigh = corr_dist; // init. value will allow for no optimisation
 
     if (rank == root) {
         // Add limited-size epoch to message (sacrificing part of user data)
@@ -337,7 +509,7 @@ ompi_coll_base_bcast_intra_corrected(void *buff, int count,
     }
     // Non-root nodes need to receive a message first, recvs are already posted
     else {
-        int idx;           // index of (last) successful rcv request
+        size_t idx;        // index of (last) successful rcv request
         bool done = false; // got a message (for current epoch) yet?
 
         /* We might already have received a/some "future" corr message(s) for
@@ -369,7 +541,8 @@ ompi_coll_base_bcast_intra_corrected(void *buff, int count,
             }
             // use the opportunity of two future messages to check for consistency
             else {
-                assert( (epoch_neigh[idx] % epoch_wrap) == buffers[idx * count_max] && "Future message with wrong epoch");
+                assert(buffers[idx * count_max] >= 0 && "Negative epoch rcvd");
+                assert( (epoch_neigh[idx] % epoch_wrap) == (unsigned char)buffers[idx * count_max] && "Future message with wrong epoch");
                 assert(0 == memcmp(buff, &buffers[idx * count_max], count * sizeof(char)) && "Differing payloads for same epoch");
             }
 
@@ -408,19 +581,21 @@ ompi_coll_base_bcast_intra_corrected(void *buff, int count,
 
             /* Handle *all* completed requests */
             for (int cc = 0; cc < completed; ++cc) {
-                int        const idx    = indices[cc];
+                size_t const               idx    = indices[cc];
                 MPI_Status const status = statuses[cc];
 
-                assert(idx == (status.MPI_SOURCE == parent ? 0 : rank - status.MPI_SOURCE) && "Unexpected index for sender");
+                assert(status.MPI_SOURCE >= 0 && "Invalid sender rank");
+                assert(rank - status.MPI_SOURCE > 0 && "Message (parent/correction) from right");
+                assert(idx == ( (unsigned)status.MPI_SOURCE == parent ? 0U : rank - (unsigned)status.MPI_SOURCE ) && "Unexpected index for sender");
 
                 /* Note that 'idx' "incidentally" corresponds to the sender rank's
                  * entries not only in 'reqs' but also 'buffers' and 'epoch_neigh'.
                  */
-                bool matches = ffmk_handle_receive(epoch_global,
-                                                   epoch_ltd,
-                                                   epoch_wrap,
-                                                   &epoch_neigh[idx],
-                                                   &buffers[idx * count_max]);
+                bool matches = handle_receive(epoch_global,
+                                              epoch_ltd,
+                                              epoch_wrap,
+                                              &epoch_neigh[idx],
+                                              &buffers[idx * count_max]);
 
                 assert(matches == (epoch_neigh[idx] == epoch_global) && "Function broken!?");
 
@@ -467,18 +642,10 @@ ompi_coll_base_bcast_intra_corrected(void *buff, int count,
     // first 'char' has been overwritten with our (limited) epoch.
 
 
-    /* Bulk-send tree messages to all our children
-     *
-     * Child ranks are found by setting each unused bit above our MSB in turn
-     */
-    for (int offset = 0; offset < num_child; ++offset) {
-        assert(len_rank + offset + 1 <= len_tree && "Too many children");
-
-        int const child = rank + (1 << (len_rank + offset));
-        assert(is_child(child, rank) && "Inconsistent children");
-
-        // handle non-full tree
-        if (child >= size) { break; }
+    /* Bulk-send tree messages to all our children */
+    for (size_t offset = 0; offset < num_child; ++offset) {
+        size_t const child = children[offset];
+        assert(is_child(child, num_child, children) && "Inconsistent children");
 
         assert(req_tree_snd + offset < req_corr_snd && "Too many tree snds");
         err = PMPI_Isend(buff,
@@ -491,7 +658,7 @@ ompi_coll_base_bcast_intra_corrected(void *buff, int count,
         if (MPI_SUCCESS != err) { return err; }
     }
 
-        /* Send correction messages to our 'corr_dist' right neighbours
+    /* Send correction messages to our 'corr_dist' right neighbours
      *
      * Do not send to our children or to root (implicitly since it's either to
      * our "left" or "beyond the chain" as we don't close the ring).
@@ -514,9 +681,11 @@ ompi_coll_base_bcast_intra_corrected(void *buff, int count,
     assert((corr_neigh > 0 || !corr_dist) && "Optimisation broken");
 
     bool first = true; // first round in the correction phase?
-    int offset = 0;
+    size_t offset = 0;
 
-    while (true) {
+    // If we don't do correction ('corr_dist' == 0), we can just skip that part
+    // Note that this is a constant! We break from the loop to leave it...
+    while (corr_dist) {
         bool done = first; // sent of current corr message done? (no message is being sent in the first round!)
 
         do {
@@ -526,7 +695,7 @@ ompi_coll_base_bcast_intra_corrected(void *buff, int count,
              * 'MPI_REQUEST_NULL' or inactive and thus will be ignored :-)
              */
             if (first) {
-                // do not wait, just check if messages already arrived
+                // do not wait yet, just check if request are already done
                 err = PMPI_Testsome(req_past_end - req_tree_rcv, // incount
                                     &reqs[req_tree_rcv], // array of requests
                                     &completed,          // outcount
@@ -576,16 +745,16 @@ ompi_coll_base_bcast_intra_corrected(void *buff, int count,
                 else {
                     assert( (MPI_SUCCESS == err || MPI_SUCCESS == status.MPI_ERROR) && "Failed recv");
                     assert(rank > status.MPI_SOURCE && "Correction from right neighbour (or weird/small parent rank)");
-                    assert(idx == (status.MPI_SOURCE == parent ? 0 : rank - status.MPI_SOURCE) && "Unexpected index for sender");
+                    assert((int)idx == ((unsigned)status.MPI_SOURCE == parent ? 0 : rank - status.MPI_SOURCE) && "Unexpected index for sender");
 
                     /* Note that 'idx' "incidentally" corresponds to the sender rank's
                      * entries not only in 'reqs' but also 'buffers' and 'epoch_neigh'.
                      */
-                    bool matches = ffmk_handle_receive(epoch_global,
-                                                       epoch_ltd,
-                                                       epoch_wrap,
-                                                       &epoch_neigh[idx],
-                                                       &buffers[idx * count_max]);
+                    bool matches = handle_receive(epoch_global,
+                                                  epoch_ltd,
+                                                  epoch_wrap,
+                                                  &epoch_neigh[idx],
+                                                  &buffers[idx * count_max]);
 
                     assert(matches == (epoch_neigh[idx] == epoch_global) && "Function broken!?");
 
@@ -629,16 +798,18 @@ ompi_coll_base_bcast_intra_corrected(void *buff, int count,
          * Note: 'offset' indicates the distance to the rank we just sent to.
          */
         if (epoch_ltd) {
-            int const handled_by_sender = corr_dist - corr_neigh;
+            assert(corr_dist - corr_neigh >= 0 && "Optimisation broken");
+            size_t const handled_by_sender = corr_dist - corr_neigh;
             offset = (offset > handled_by_sender) ? offset : handled_by_sender;
         }
 
         int receiver;
 
+        // Find the next receiver, but do not send to children
         do {
             ++offset;
             receiver = rank + offset; // send to right
-        } while (is_child(receiver, rank)); // Do not send to children
+        } while (is_child(receiver, num_child, children));
 
 //         if (send_over_root) {
 //             receiver = (receiver + size) % size;
