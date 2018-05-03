@@ -19,6 +19,8 @@ dir <- '08-55-36_020518.2906.taurus'
 
 dir <- '09-26-01_020518.10513.taurus'
 
+dir <- '00-48-16_030518.930.taurus'
+
 plot.avg <- function(df) {
     breaks <- unique(df$Size)
     nodes <- unique(df$Nproc)
@@ -164,13 +166,14 @@ lty <- scale_linetype_manual(name="Faults", values=c(1, 2, 3, 4))
                                                 
 df <- read.csv(paste0('../logs/taurus/', dir, '/table.csv')) %>%
     mutate(Nproc = Nnodes * 24) %>%
-    mutate(Corr = ifelse(Corr == 6, 'Open~MPI',
-                  ifelse(Corr == 7, 'Corrected', 'XXX')))
+    mutate(Algorithm = ifelse(Algorithm == 6, 'Open~MPI',
+                  ifelse(Algorithm == 7, 'Corrected', 'XXX')))
 df.sum <- df %>% 
     group_by(Corr, Algorithm, Nproc, FaultCount, Size) %>%
     summarize(AvgTime.50 = median(AvgTime),
               AvgTime.25 = quantile(AvgTime, .25),
               AvgTime.75 = quantile(AvgTime, .75))
+
 tikz('../../../../tree-broadcast/taurus.tex', width=3, height=2.0)
 breaks <- sort(unique(df.sum$Size))
 labels <- breaks
@@ -188,7 +191,6 @@ df.sum %>% filter(Size %in% c(8, 256) & (Algorithm == 'Open~MPI' | Corr == 2)) %
           legend.box.margin = margin(c(1, 1, 1, 1), unit='mm'),
           legend.spacing = unit(1, 'mm'),
           legend.background = element_blank()) +
-    ylim(c(11,18)) +
     fill + col + lty + shape
 dev.off()
 
