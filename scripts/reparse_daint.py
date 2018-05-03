@@ -38,7 +38,7 @@ def main():
 
     with open(log_dir + '/table.csv', 'w') as f:
         writer = csv.writer(f)
-        writer.writerow(['Nnodes', 'Per_node', 'CorrType', 'Nproc',
+        writer.writerow(['Nnodes', 'Per_node', 'TreeType', 'LameK', 'CorrType', 'Nproc',
                          'Corr', 'FaultCount',
                          'i', 'FaultList', 'Size',
                          'AvgTime', 'MinTime', 'MaxTime', 'Iterations'])
