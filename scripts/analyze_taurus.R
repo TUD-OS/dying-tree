@@ -184,12 +184,14 @@ df.sum %>% filter(Size %in% c(8, 256) & (Algorithm == 'Open~MPI' | Corr == 2)) %
     geom_ribbon(aes(ymin=AvgTime.25, ymax=AvgTime.75), alpha=0.3) +
     geom_point(aes(shape=factor(Algorithm), col=factor(Algorithm))) +
     facet_grid(~Size) +
-    ylab('Latency, $\\mu{}s$') +  xlab("Cores") +
+    ylab('Latency, $\\mu{}s$') +  xlab("Processes") +
     theme_Publication() %+replace%
     theme(legend.position = 'right',
           legend.margin = margin(0.5, unit='mm'),
           legend.box.margin = margin(c(1, 1, 1, 1), unit='mm'),
           legend.spacing = unit(1, 'mm'),
+          legend.key.height = unit(3, 'mm'),
+          legend.key.width = unit(4, 'mm'),
           legend.background = element_blank()) +
     fill + col + lty + shape
 dev.off()
@@ -223,6 +225,7 @@ df.sum %>% filter(Size %in% c(256) & (Algorithm == 7)) %>%
           legend.box.margin = margin(c(0, 0, 1, 0.5), unit='mm'),
           legend.spacing = unit(0.5, 'mm'),
           legend.key.height = unit(2, 'mm'),
+          legend.key.width = unit(2, 'mm'),
           legend.background = element_blank()) +
     col + shape + ylim(c(12,20))
 
