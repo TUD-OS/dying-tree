@@ -186,7 +186,7 @@ setup_tree(int const rank, int const comm_size,
     return false; // unreached
 }
 
-/* Test whether 'rank' is one of our children (i.e. is in the array)*/
+/* Test whether 'rank' is one of our children (i.e. is in the array) */
 static bool
 is_child(size_t const rank, size_t const num_child, size_t const * const children)
 {
@@ -788,17 +788,17 @@ ompi_coll_base_bcast_intra_corrected(void *buff, int count,
 
         /* Our current corr message has been sent now. Before considering the
          * next corr message, update 'offset' so ranks covered by anybody who
-         * sent to us are not bothered by us as well. The other guy will be
-         * faster anyway.
+         * sent to us are not bothered by us as well. The other guy (that just
+         * sent to us) will reach those faster anyway.
          *
-         * Skip this optimisation at the start of new hyper epochs. There we
-         * *always* send corrections to maintain the sync between different
-         * ranks.
+         * Skip this optimisation at the start of new hyper epochs
+         * ('epoch_ltd' == 0). There we *always* send corrections to maintain
+         * the sync between different ranks.
          *
          * Note: 'offset' indicates the distance to the rank we just sent to.
          */
         if (epoch_ltd) {
-            assert(corr_dist - corr_neigh >= 0 && "Optimisation broken");
+            assert(corr_neigh <= corr_dist && "Optimisation broken");
             size_t const handled_by_sender = corr_dist - corr_neigh;
             offset = (offset > handled_by_sender) ? offset : handled_by_sender;
         }
