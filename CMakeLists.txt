@@ -21,5 +21,7 @@ add_library(dying SHARED
   dying.c
   util.c
   corrected_tree.c
-  dying_wrap.h)
+  corrected_binomial-tree.c
+  corrected_lame-tree.c
+)
 target_link_libraries(dying ${MPI_C_LIBRARIES})

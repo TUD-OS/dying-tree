@@ -1,3 +1,7 @@
+// forward declaration
+int corrected_broadcast(void *const, int const, MPI_Datatype const, int const, MPI_Comm const);
+
+
 {{fn fn_name MPI_Init}}
      {{callfn}}
      die_if_needed();
@@ -11,7 +15,7 @@
 {{fn fn_name MPI_Bcast}}
      if (!die_in_bcast()) {
        // {{callfn}}
-       {{ret_val}} = ompi_coll_base_bcast_intra_corrected{{argList}};
+       {{ret_val}} = corrected_broadcast{{argList}};
      }
 {{endfn}}
 

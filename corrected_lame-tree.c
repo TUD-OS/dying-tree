@@ -2,6 +2,7 @@
 #include <stdlib.h>
 
 #include "corrected_lame-tree.h"
+#include "util.h"
 
 
 // all setup_tree_lame_* functions taken from simulator (and adopted to C)
