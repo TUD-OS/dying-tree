@@ -11,6 +11,79 @@
 #include "corrected_lame-tree.h"
 
 
+#define IMPL_INSIDE_OMPI 0
+
+
+#if IMPL_INSIDE_OMPI
+    // constants
+    #define CORRT_ERR_NO_MEM   OMPI_ERR_OUT_OF_RESOURCE
+    #define CORRT_ERR_NOT_IMPL OMPI_ERR_NOT_IMPLEMENTED
+
+    // types
+    #define CORRT_MPI_STATUS ompi_status_public_t
+
+    // functions
+    #define CORRT_ALLOC_REQS(NUM) \
+        coll_base_comm_get_reqs(module->base_data, NUM)
+
+    #define CORRT_MPI_ABORT(A,B) \
+        ompi_mpi_abort(A,B)
+    #define CORRT_MPI_COMM_SIZE(COMM,SIZE) \
+        *(SIZE) = ompi_comm_size(COMM)
+    #define CORRT_MPI_COMM_RANK(COMM,RANK) \
+        *(RANK) = ompi_comm_rank(COMM)
+
+    #define CORRT_MPI_ISEND(A,B,C,D,E,F,G) \
+        MCA_PML_CALL(isend(A,B,C,D,E,F,G))
+    #define CORRT_MPI_RECV_INIT(A,B,C,D,E,F,G) \
+        MCA_PML_CALL(irecv_init(A,B,C,D,E,F,G))
+    #define CORRT_MPI_START(A) \
+        MCA_PML_CALL(start(1, A))
+
+    #define CORRT_MPI_TESTSOME(A,B,C,D,E) \
+        ompi_request_test_some(A,B,C,D,E)
+    #define CORRT_MPI_WAITSOME(A,B,C,D,E) \
+        ompi_request_wait_some(A,B,C,D,E)
+    #define CORRT_MPI_WAITALL(A,B,C,D,E,F,G,H) \
+        ompi_request_wait_all(A,B,C,D,E,F,G,H)
+
+#else
+    // constants
+    static int const MCA_COLL_BASE_TAG_BCAST = 2342; // message tag to use for our bcast
+
+    #define CORRT_ERR_NO_MEM   MPI_ERR_NO_MEM
+    #define CORRT_ERR_NOT_IMPL MPI_ERR_INTERN
+
+    // types
+    #define CORRT_MPI_STATUS MPI_Status
+
+    // functions
+    #define CORRT_ALLOC_REQS(NUM) \
+        malloc( (NUM) * sizeof(MPI_Request) )
+
+
+    #define CORRT_MPI_ABORT(A,B) \
+        PMPI_Abort(A,B)
+    #define CORRT_MPI_COMM_SIZE(COMM,SIZE) \
+        PMPI_Comm_size(COMM,SIZE)
+    #define CORRT_MPI_COMM_RANK(COMM,RANK) \
+        PMPI_Comm_size(COMM,RANK)
+
+    #define CORRT_MPI_ISEND(A,B,C,D,E,F,G) \
+        PMPI_Isend(A,B,C,D,E,F,G)
+    #define CORRT_MPI_RECV_INIT(A,B,C,D,E,F,G) \
+        PMPI_Recv_init(A,B,C,D,E,F,G)
+    #define CORRT_MPI_START(A) \
+        PMPI_Start(A)
+
+    #define CORRT_MPI_TESTSOME(A,B,C,D,E) \
+        PMPI_Testsome(A,B,C,D,E)
+    #define CORRT_MPI_WAITSOME(A,B,C,D,E) \
+        PMPI_Waitsome(A,B,C,D,E)
+    #define CORRT_MPI_WAITALL(A,B,C,D,E,F,G,H) \
+        PMPI_Waitall(A,B,C,D,E,F,G,H)
+#endif
+
 
 /******************************************************************************
  * Global buffers or values                                                   *
@@ -22,8 +95,6 @@
  * those whose size is not known at compile time. These are pointers to       *
  * 'malloc'ed memory.                                                         *
  ******************************************************************************/
-static int const MCA_COLL_BASE_TAG_BCAST = 2342; // message tag to use for our bcast
-
 static size_t corr_dist  = 0xBEEFBABE, // opportunistic correction distance (mark as uninit)
               count_max  = 0xBEEFBABE; // maximum allowed message size (mark as uninit)
 
@@ -91,8 +162,8 @@ static bool *buff_fut = NULL;
 
 
 /* Arrays used for 'Testsome'/'Waitsome' ('static' to avoid stack allocation) */
-static MPI_Status *statuses = NULL;
-static int        *indices  = NULL;
+static CORRT_MPI_STATUS *statuses = NULL;
+static int             *indices  = NULL;
 
 /* Tree structure */
 static size_t num_child = 42,   // number of child ranks
@@ -128,7 +199,7 @@ setup_tree(int const rank, int const comm_size,
     }
 
     fprintf(stderr, "Unknown tree: '%s'\n", tree_type);
-    PMPI_Abort(MPI_COMM_WORLD, -1);
+    CORRT_MPI_ABORT(MPI_COMM_WORLD, -1);
     return false; // unreached
 }
 
@@ -219,7 +290,7 @@ allocate_buffers()
 
     // Dedicated buffers for each of the receives; 'count_max' entries each
     buffers = malloc( (1 + corr_dist) * count_max * sizeof(char) );
-    if (!buffers) { return MPI_ERR_NO_MEM; }
+    if (!buffers) { return CORRT_ERR_NO_MEM; }
 
     /* For our parent and each of our "correction neighbours" we store the
      * (absolute) epoch in which we expect to get the next message from
@@ -228,25 +299,25 @@ allocate_buffers()
      * of that message, which is held in the neighbour's rcv buffer.
      */
     epoch_neigh = calloc(1 + corr_dist, sizeof(long long));
-    if (!epoch_neigh) { return MPI_ERR_NO_MEM; }
+    if (!epoch_neigh) { return CORRT_ERR_NO_MEM; }
 
     // Flags to keep track of already-received future messages
     buff_fut = calloc(1 + corr_dist, sizeof(bool));
-    if (!buff_fut) { return MPI_ERR_NO_MEM; }
+    if (!buff_fut) { return CORRT_ERR_NO_MEM; }
 
     /* Request objects for all sends + receives (init to 'MPI_REQUEST_NULL'!) */
-    reqs = malloc( (1 + num_child + 2 * corr_dist) * sizeof(MPI_Request) );
-    if (!reqs) { return MPI_ERR_NO_MEM; }
+    reqs = CORRT_ALLOC_REQS(1 + num_child + 2 * corr_dist);
+    if (!reqs) { return CORRT_ERR_NO_MEM; }
 
     for (int cc=0; cc<1 + num_child + 2 * corr_dist; ++cc) {
         reqs[cc] = MPI_REQUEST_NULL;
     }
 
     /* Arrays for 'Waitsome' */
-    statuses  = malloc( (1 + num_child + 2 * corr_dist) * sizeof(MPI_Status) );
-    if (!statuses) { return MPI_ERR_NO_MEM; }
+    statuses  = malloc( (1 + num_child + 2 * corr_dist) * sizeof(CORRT_MPI_STATUS) );
+    if (!statuses) { return CORRT_ERR_NO_MEM; }
     indices = malloc( (1 + num_child + 2 * corr_dist) * sizeof(int) );
-    if (!indices) { return MPI_ERR_NO_MEM; }
+    if (!indices) { return CORRT_ERR_NO_MEM; }
 
     assert(reqs && epoch_neigh && buff_fut && buffers && statuses && indices && "Memory not properly allocated.");
     return MPI_SUCCESS;
@@ -317,7 +388,7 @@ receive_initial_message(unsigned long long const epoch_global, // IN
         *corr_neigh = (idx && idx < *corr_neigh) ? idx : *corr_neigh;
 
         // Reactivate the receive request, now that we caught up
-        err = PMPI_Start(&reqs[req_tree_rcv + idx]);
+        err = CORRT_MPI_START(&reqs[req_tree_rcv + idx]);
         if (MPI_SUCCESS != err) { return err; }
     } // end -- handle stored future messages for this epoch
 
@@ -348,7 +419,7 @@ receive_initial_message(unsigned long long const epoch_global, // IN
         /* Handle *all* completed requests */
         for (int cc = 0; cc < completed; ++cc) {
             size_t const               idx    = indices[cc];
-            MPI_Status const status = statuses[cc];
+            CORRT_MPI_STATUS const status = statuses[cc];
 
             assert(status.MPI_SOURCE >= 0 && "Invalid sender rank");
             assert(rank - status.MPI_SOURCE > 0 && "Message (parent/correction) from right");
@@ -394,7 +465,7 @@ receive_initial_message(unsigned long long const epoch_global, // IN
             }
 
             // Reactivate the completed recv
-            err = PMPI_Start(&reqs[req_tree_rcv + idx]);
+            err = CORRT_MPI_START(&reqs[req_tree_rcv + idx]);
             if (MPI_SUCCESS != err) { return err; }
 
             // Next time, we expect the next epoch from him, of course
@@ -423,7 +494,7 @@ corrected_broadcast(void *const buff,
      * of OMPI's internal metadata that establishes message order anyways.
      */
     if (root != 0 || datatype != MPI_CHAR || count < 1 || comm != MPI_COMM_WORLD) {
-        return MPI_ERR_INTERN;
+        return CORRT_ERR_NOT_IMPL;
     }
 
     // Current epoch or broadcast round ('static' to keep it around)
@@ -438,16 +509,16 @@ corrected_broadcast(void *const buff,
 
         // our rank number and the comm size should stay constant, so fetch them here just once
         assert(!rank && !size && "MPI info already set!?");
-        PMPI_Comm_size(comm, &size);
-        PMPI_Comm_rank(comm, &rank);
+        CORRT_MPI_COMM_SIZE(comm, &size);
+        CORRT_MPI_COMM_RANK(comm, &rank);
 
         assert(!children && "Child list allocated!?");
         if (!setup_tree(rank, size, &num_child, &parent, &children)) {
-            return MPI_ERR_NO_MEM;
+            return CORRT_ERR_NO_MEM;
         }
 
-        int const i_corr_dist = read_env_int("CORR_DIST"),
-                  i_count_max = read_env_int("CORR_COUNT_MAX");
+        int const i_corr_dist = read_env_int("CORRT_DIST"),
+                  i_count_max = read_env_int("CORRT_COUNT_MAX");
         assert(i_corr_dist >= 0 && "Negative correction distance");
         assert(i_count_max >= 0 && "Negative maximum message size");
         assert(corr_dist == 0xBEEFBABE && count_max == 0xBEEFBABE && "Params already initialised!?");
@@ -470,11 +541,12 @@ corrected_broadcast(void *const buff,
         req_past_end = req_corr_snd + corr_dist;
     }
 
+    assert(size > 0 && rank >=0 && rank < size && "MPI info not properly set.");
     assert((!num_child || children) && "Child list not properly allocated.");
     assert(corr_dist >= 0 && count_max >= 1 && "Params not initialised!?");
 
     // Reject unexpected parameters ... it's only a prototype after all
-    if ( (size_t)count > count_max ) { return MPI_ERR_INTERN; }
+    if ( (size_t)count > count_max ) { return CORRT_ERR_NOT_IMPL; }
 
 
     int err = MPI_SUCCESS;
@@ -493,7 +565,7 @@ corrected_broadcast(void *const buff,
             assert(parent < (unsigned)rank && "Invalid parent");
 
             // ... a tree message from their parent
-            err = PMPI_Recv_init(&buffers[req_tree_rcv * count_max],
+            err = CORRT_MPI_RECV_INIT(&buffers[req_tree_rcv * count_max],
                                  count_max,
                                  datatype,
                                  parent,
@@ -513,7 +585,7 @@ corrected_broadcast(void *const buff,
                 // we never get corr messages from our parent
                 if ((size_t)sender == parent) { continue; }
 
-                err = PMPI_Recv_init(&buffers[(req_corr_rcv + offset) * count_max],
+                err = CORRT_MPI_RECV_INIT(&buffers[(req_corr_rcv + offset) * count_max],
                                      count_max,
                                      datatype,
                                      sender,
@@ -532,15 +604,12 @@ corrected_broadcast(void *const buff,
              */
             for (size_t cc = req_tree_rcv; cc < req_tree_snd; ++cc) {
                 if (reqs[cc] == MPI_REQUEST_NULL) { continue; }
-                err = PMPI_Start(&reqs[cc]);
+                err = CORRT_MPI_START(&reqs[cc]);
                 if (MPI_SUCCESS != err) { return err; }
             }
-//             err = PMPI_Startall(req_tree_snd - req_tree_rcv, &reqs[req_tree_rcv]);
-//             if (MPI_SUCCESS != err) { return err; }
         }
     }
 
-    assert(size > 0 && rank >=0 && rank < size && "MPI info not properly set.");
     assert(reqs && epoch_neigh && buff_fut && buffers && statuses && indices && (!num_child || children) && "Memory not properly allocated.");
     assert( (rank != root || (MPI_REQUEST_NULL == reqs[req_tree_rcv]) ) && "Root with active tree recv");
     assert( (rank == root || (MPI_REQUEST_NULL != reqs[req_tree_rcv]) ) && "Non-root w/o active tree recv");
@@ -588,7 +657,7 @@ corrected_broadcast(void *const buff,
         assert(is_child(child, num_child, children) && "Inconsistent children");
 
         assert(req_tree_snd + offset < req_corr_snd && "Too many tree snds");
-        err = PMPI_Isend(buff,
+        err = CORRT_MPI_ISEND(buff,
                          count,
                          datatype,
                          child,
@@ -636,7 +705,7 @@ corrected_broadcast(void *const buff,
              */
             if (first) {
                 // do not wait yet, just check if request are already done
-                err = PMPI_Testsome(req_past_end - req_tree_rcv, // incount
+                err = CORRT_MPI_TESTSOME(req_past_end - req_tree_rcv, // incount
                                     &reqs[req_tree_rcv], // array of requests
                                     &completed,          // outcount
                                     indices,             // array of indices
@@ -667,7 +736,7 @@ corrected_broadcast(void *const buff,
             for (int cc = 0; cc < completed; ++cc) {
                 assert(indices[cc] >= 0 && "Test/Waitsome broken!?");
                 size_t     const idx    = indices[cc];
-                MPI_Status const status = statuses[cc];
+                CORRT_MPI_STATUS const status = statuses[cc];
 
                 // send finished
                 if (idx >= req_tree_snd) {
@@ -718,7 +787,7 @@ corrected_broadcast(void *const buff,
                 } // end -- recv
 
                 // Reactivate completed recv
-                err = PMPI_Start(&reqs[req_tree_rcv + idx]);
+                err = CORRT_MPI_START(&reqs[req_tree_rcv + idx]);
                 if (MPI_SUCCESS != err) { return err; }
 
                 // Next time, we expect the next epoch from him, of course
@@ -754,7 +823,7 @@ corrected_broadcast(void *const buff,
         // Handle end of the chain (1st part) or end of correction (2nd part)
         if (receiver >= size || offset > corr_dist) { break; }
 
-        err = PMPI_Isend(buff,
+        err = CORRT_MPI_ISEND(buff,
                          count,
                          datatype,
                          receiver,
