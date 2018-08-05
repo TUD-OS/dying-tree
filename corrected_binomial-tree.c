@@ -26,7 +26,7 @@ bool
 setup_tree_binomial(int const rank, int const comm_size,
                     size_t *num_child, size_t *parent, size_t **children)
 {
-    size_t const len_rank = get_msb(rank),     // length/bits of rank ID
+    size_t const len_rank = get_msb(rank),          // length/bits of rank ID
                  len_tree = get_msb(comm_size - 1); // max length/bits of rank IDs
 
     *num_child = len_tree - len_rank; // remaining bits = (max) children

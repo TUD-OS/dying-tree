@@ -67,7 +67,7 @@
     #define CORRT_MPI_COMM_SIZE(COMM,SIZE) \
         PMPI_Comm_size(COMM,SIZE)
     #define CORRT_MPI_COMM_RANK(COMM,RANK) \
-        PMPI_Comm_size(COMM,RANK)
+        PMPI_Comm_rank(COMM,RANK)
 
     #define CORRT_MPI_ISEND(A,B,C,D,E,F,G) \
         PMPI_Isend(A,B,C,D,E,F,G)
@@ -335,9 +335,9 @@ allocate_buffers()
 static inline int
 receive_initial_message(unsigned long long const epoch_global, // IN
                         char               const epoch_ltd,    // IN
-                        int const         count,    // IN
-                        void       *const buff,      // OUT
-                        size_t     *const corr_neigh // IN+OUT
+                        int                const count,        // IN
+                        void              *const buff,         // OUT
+                        size_t            *const corr_neigh    // IN+OUT
                        )
 {
     assert(epoch_ltd == epoch_global % epoch_wrap);
@@ -349,7 +349,7 @@ receive_initial_message(unsigned long long const epoch_global, // IN
     /* We might already have received a/some "future" corr message(s) for
      * the current epoch...
      *
-     * Note that we need to find *all* "future" corr mesages for this
+     * Note that we need to find *all* "future" corr messages for this
      * epoch and reenable the respective receives.
      *
      * Note that, by design, we never receive future messages from out
@@ -478,7 +478,189 @@ receive_initial_message(unsigned long long const epoch_global, // IN
 
 
 /*
- * Implementation of corrected broadcast core
+ * Send correction messages to our 'corr_dist' right neighbours
+ *
+ * Do not send to our children or to root (implicitly since it's either to
+ * our "left" or "beyond the chain" as we don't close the ring).
+ *
+ * As a (possible) optimisation, we send corrections one by one, omitting
+ * corr messages to those ranks that we know will be covered be others
+ * (that already sent to us).
+ *
+ * Example: (R-3) (R-2) (R-1)  (R)  (R+1) (R+2) (R+3)
+ *
+ * If we (R) received from (R-1) and 'corr_dist' == 3, we know (R-1) will
+ * also send corr to (R+1) and (R+2), so we only send to (R+3).
+ *
+ * Note that we might already have received corr messages before, so
+ * consider 'corr_neigh' which gives the distance to the closest rank
+ * we received correction from for this epoch.
+ *
+ * return MPI status code
+ */
+static inline int
+do_correction(unsigned long long const epoch_global, // IN
+              char               const epoch_ltd,    // IN
+              int                const count,        // IN
+              MPI_Datatype       const datatype,     // IN
+              MPI_Comm           const comm,         // IN
+              void      const   *const buff,         // IN
+              size_t            *const corr_neigh    // IN+OUT
+)
+{
+    assert(epoch_ltd == epoch_global % epoch_wrap);
+
+    int    err    = MPI_SUCCESS;
+    bool   first  = true; // first round in the correction phase?
+    size_t offset = 0;   // offset of node to send to currently (Note: we don't send in first round)
+
+    while (true) {
+        bool done = first; // sent of current corr message done? (no message is being sent in the first round!)
+
+        do {
+            int completed = MPI_UNDEFINED; // better be safe and initialise it
+
+            /* It's fine to use all reqs since irrelevant ones are set to
+             * 'MPI_REQUEST_NULL' or inactive and thus will be ignored :-)
+             */
+            if (first) {
+                // do not wait yet, just check if any requests are already done
+                err = CORRT_MPI_TESTSOME(req_past_end - req_tree_rcv, // incount
+                                    &reqs[req_tree_rcv], // array of requests
+                                    &completed,          // outcount
+                                    indices,             // array of indices
+                                    statuses);           // array of statuses
+                first = false;
+            }
+            else {
+                err = CORRT_MPI_WAITSOME(req_past_end - req_tree_rcv, // incount
+                                         &reqs[req_tree_rcv], // array of requests
+                                         &completed,          // outcount
+                                         indices,             // array of indices
+                                         statuses);           // array of statuses
+            }
+            assert(completed != MPI_UNDEFINED && "No active requests!?");
+
+            /* From the MPI standard:
+             * "The call will return the error code MPI_ERR_IN_STATUS and the
+             *  error field of each status returned will be set to indicate
+             *  success or to indicate the specific error that occurred.
+             *  The call will return MPI_SUCCESS if no request resulted in an
+             *  error, and will return another error code if it failed for other
+             *  reasons (such as invalid arguments). In such cases, it will not
+             *  update the error fields of the statuses."
+             */
+            if (MPI_SUCCESS != err && MPI_ERR_IN_STATUS != err) { return err; }
+
+            /* Handle *all* completed requests */
+            for (int cc = 0; cc < completed; ++cc) {
+                assert(indices[cc] >= 0 && "Test/Waitsome broken!?");
+                size_t     const idx    = indices[cc];
+                CORRT_MPI_STATUS const status = statuses[cc];
+
+                // send finished
+                if (idx >= req_tree_snd) {
+                    // Was it a (i.e. our current) corr message?
+                    // Note: We don't care much about tree sends here...
+                    if (idx >= req_corr_snd) {
+                        assert(idx == req_corr_snd + offset - 1 && "Unexpected send ");
+                        done = true;
+                    }
+
+                    // That's all, just handle the next completion
+                    continue;
+                }
+                // receive finished
+                else {
+                    assert( (MPI_SUCCESS == err || MPI_SUCCESS == status.MPI_ERROR) && "Failed recv");
+                    assert(rank > status.MPI_SOURCE && "Correction from right neighbour (or weird/small parent rank)");
+                    assert((int)idx == ((unsigned)status.MPI_SOURCE == parent ? 0 : rank - status.MPI_SOURCE) && "Unexpected index for sender");
+
+                    /* Note that 'idx' "incidentally" corresponds to the sender rank's
+                     * entries not only in 'reqs' but also 'buffers' and 'epoch_neigh'.
+                     */
+                    bool matches = handle_receive(epoch_global,
+                                                  epoch_ltd,
+                                                  epoch_wrap,
+                                                  &epoch_neigh[idx],
+                                                  &buffers[idx * count_max]);
+
+                    assert(matches == (epoch_neigh[idx] == epoch_global) && "Function broken!?");
+
+                    // It's the right epoch, but we already got the message before...
+                    if (matches) {
+                        // ... use the opportunity for a consistency check
+                        // Note: This *must* be done before we reactivate the send! Races...
+                        assert(0 == memcmp(buff, &buffers[idx * count_max], count * sizeof(char)) && "Differing payloads for same epoch");
+
+                        // keep track of the closest sender
+                        // (unless the message came from our parent)
+                        // Note: 'idx' "conincidentely" is our distance from the sender
+                        *corr_neigh = (idx && idx < *corr_neigh) ? idx : *corr_neigh;
+                    }
+                    // Future message
+                    // Note: Nothing special to do for stale messages
+                    else if (epoch_neigh[idx] > epoch_global) {
+                        buff_fut[idx] = true;
+                        continue; // do *not* reactivate the rcv or increase epoch, handle next completion
+                    }
+                } // end -- recv
+
+                // Reactivate completed recv
+                err = CORRT_MPI_START(&reqs[req_tree_rcv + idx]);
+                if (MPI_SUCCESS != err) { return err; }
+
+                // Next time, we expect the next epoch from him, of course
+                ++epoch_neigh[idx];
+            } // end -- handle completed requests
+        } while (!done); // end -- while (current corr message not sent)
+
+        /* Our current corr message has been sent now. Before considering the
+         * next corr message, update 'offset' so ranks covered by anybody who
+         * sent to us are not bothered by us as well. The other guy (that just
+         * sent to us) will reach those faster anyway.
+         *
+         * Skip this optimisation at the start of new hyper epochs
+         * ('epoch_ltd' == 0). There we *always* send corrections to maintain
+         * the sync between different ranks.
+         *
+         * Note: 'offset' indicates the distance to the rank we just sent to.
+         */
+        if (epoch_ltd) {
+            assert(*corr_neigh <= corr_dist && "Optimisation broken");
+            size_t const handled_by_sender = corr_dist - *corr_neigh;
+            offset = (offset > handled_by_sender) ? offset : handled_by_sender;
+        }
+
+        int receiver;
+
+        // Find the next receiver, but do not send to children
+        do {
+            ++offset;
+            receiver = rank + offset; // send to right
+        } while (is_child(receiver, num_child, children));
+
+        // Handle end of the chain (1st part) or end of correction (2nd part)
+        if (receiver >= size || offset > corr_dist) { break; }
+
+        err = CORRT_MPI_ISEND(buff,
+                         count,
+                         datatype,
+                         receiver,
+                         MCA_COLL_BASE_TAG_BCAST,
+                         comm,
+                         &reqs[req_corr_snd + offset - 1]);
+        if (MPI_SUCCESS != err) { return err; }
+
+    } // end -- cover 'corr_dist' neighbours with 'offset'
+
+
+    assert(MPI_SUCCESS == err);
+    return err;
+}
+
+/*
+ * Core implementation of corrected broadcast
  */
 int
 corrected_broadcast(void *const buff,
@@ -506,11 +688,11 @@ corrected_broadcast(void *const buff,
      * we split up the buffers in the next step.
      */
     if (epoch_global == 0) {
-
         // our rank number and the comm size should stay constant, so fetch them here just once
         assert(!rank && !size && "MPI info already set!?");
         CORRT_MPI_COMM_SIZE(comm, &size);
         CORRT_MPI_COMM_RANK(comm, &rank);
+        assert(size > 0 && rank >=0 && rank < size && "MPI info not properly set.");
 
         assert(!children && "Child list allocated!?");
         if (!setup_tree(rank, size, &num_child, &parent, &children)) {
@@ -527,7 +709,7 @@ corrected_broadcast(void *const buff,
         count_max = (size_t) i_count_max;
 
         // see description on declaration site!
-        assert(req_tree_rcv == 0xBEEFBABE &&
+        assert(req_tree_rcv == 0 &&
                req_corr_rcv == 0xBEEFBABE &&
                req_tree_snd == 0xBEEFBABE &&
                req_corr_snd == 0xBEEFBABE &&
@@ -667,25 +849,6 @@ corrected_broadcast(void *const buff,
         if (MPI_SUCCESS != err) { return err; }
     }
 
-    /* Send correction messages to our 'corr_dist' right neighbours
-     *
-     * Do not send to our children or to root (implicitly since it's either to
-     * our "left" or "beyond the chain" as we don't close the ring).
-     *
-     * As a (possible) optimisation, we send corrections one by one, omitting
-     * corr messages to those ranks that we know will be covered be others
-     * (that already sent to us).
-     *
-     * Example: (R-3) (R-2) (R-1)  (R)  (R+1) (R+2) (R+3)
-     *
-     * If we (R) received from (R-1) and 'corr_dist' == 3, we know (R-1) will
-     * also send corr to (R+1) and (R+2), so we only send to (R+3).
-     *
-     * Note that we might already have received corr messages before, so
-     * consider 'corr_neigh' which gives the distance to the closest rank
-     * we received correction from for this epoch.
-     */
-
     assert(corr_neigh <= corr_dist && "Optimisation broken");
     assert((corr_neigh > 0 || !corr_dist) && "Optimisation broken");
 
@@ -693,147 +856,16 @@ corrected_broadcast(void *const buff,
     size_t offset = 0;
 
     // If we don't do correction ('corr_dist' == 0), we can just skip that part
-    // Note that this is a constant! We break from the loop to leave it...
-    while (corr_dist) {
-        bool done = first; // sent of current corr message done? (no message is being sent in the first round!)
-
-        do {
-            int completed = MPI_UNDEFINED; // better be safe and initialise it
-
-            /* It's fine to use all reqs since irrelevant ones are set to
-             * 'MPI_REQUEST_NULL' or inactive and thus will be ignored :-)
-             */
-            if (first) {
-                // do not wait yet, just check if request are already done
-                err = CORRT_MPI_TESTSOME(req_past_end - req_tree_rcv, // incount
-                                    &reqs[req_tree_rcv], // array of requests
-                                    &completed,          // outcount
-                                    indices,             // array of indices
-                                    statuses);           // array of statuses
-                first = false;
-            }
-            else {
-                err = PMPI_Waitsome(req_past_end - req_tree_rcv, // incount
-                                    &reqs[req_tree_rcv], // array of requests
-                                    &completed,          // outcount
-                                    indices,             // array of indices
-                                    statuses);           // array of statuses
-            }
-            assert(completed != MPI_UNDEFINED && "No active requests!?");
-
-            /* From the MPI standard:
-             * "The call will return the error code MPI_ERR_IN_STATUS and the
-             *  error field of each status returned will be set to indicate
-             *  success or to indicate the specific error that occurred.
-             *  The call will return MPI_SUCCESS if no request resulted in an
-             *  error, and will return another error code if it failed for other
-             *  reasons (such as invalid arguments). In such cases, it will not
-             *  update the error fields of the statuses."
-             */
-            if (MPI_SUCCESS != err && MPI_ERR_IN_STATUS != err) { return err; }
-
-            /* Handle *all* completed requests */
-            for (int cc = 0; cc < completed; ++cc) {
-                assert(indices[cc] >= 0 && "Test/Waitsome broken!?");
-                size_t     const idx    = indices[cc];
-                CORRT_MPI_STATUS const status = statuses[cc];
-
-                // send finished
-                if (idx >= req_tree_snd) {
-                    // Was it a (i.e. our current) corr message?
-                    // Note: We don't care much about tree sends here...
-                    if (idx >= req_corr_snd) {
-                        assert(idx == req_corr_snd + offset - 1 && "Unexpected send ");
-                        done = true;
-                    }
-
-                    // That's all, just handle the next completion
-                    continue;
-                }
-                // receive finished
-                else {
-                    assert( (MPI_SUCCESS == err || MPI_SUCCESS == status.MPI_ERROR) && "Failed recv");
-                    assert(rank > status.MPI_SOURCE && "Correction from right neighbour (or weird/small parent rank)");
-                    assert((int)idx == ((unsigned)status.MPI_SOURCE == parent ? 0 : rank - status.MPI_SOURCE) && "Unexpected index for sender");
-
-                    /* Note that 'idx' "incidentally" corresponds to the sender rank's
-                     * entries not only in 'reqs' but also 'buffers' and 'epoch_neigh'.
-                     */
-                    bool matches = handle_receive(epoch_global,
-                                                  epoch_ltd,
-                                                  epoch_wrap,
-                                                  &epoch_neigh[idx],
-                                                  &buffers[idx * count_max]);
-
-                    assert(matches == (epoch_neigh[idx] == epoch_global) && "Function broken!?");
-
-                    // It's the right epoch, but we already got the message before...
-                    if (matches) {
-                        // ... use the opportunity for a consistency check
-                        // Note: This *must* be done before we reactivate the send! Races...
-                        assert(0 == memcmp(buff, &buffers[idx * count_max], count * sizeof(char)) && "Differing payloads for same epoch");
-
-                        // keep track of the closest sender
-                        // (unless the message came from our parent)
-                        // Note: 'idx' "conincidentely" is our distance from the sender
-                        corr_neigh = (idx && idx < corr_neigh) ? idx : corr_neigh;
-                    }
-                    // Future message
-                    // Note: Nothing special to do for stale messages
-                    else if (epoch_neigh[idx] > epoch_global) {
-                        buff_fut[idx] = true;
-                        continue; // do *not* reactivate the rcv or increase epoch, handle next completion
-                    }
-                } // end -- recv
-
-                // Reactivate completed recv
-                err = CORRT_MPI_START(&reqs[req_tree_rcv + idx]);
-                if (MPI_SUCCESS != err) { return err; }
-
-                // Next time, we expect the next epoch from him, of course
-                ++epoch_neigh[idx];
-            } // end -- handle completed requests
-        } while (!done); // end -- while (current corr message not sent)
-
-        /* Our current corr message has been sent now. Before considering the
-         * next corr message, update 'offset' so ranks covered by anybody who
-         * sent to us are not bothered by us as well. The other guy (that just
-         * sent to us) will reach those faster anyway.
-         *
-         * Skip this optimisation at the start of new hyper epochs
-         * ('epoch_ltd' == 0). There we *always* send corrections to maintain
-         * the sync between different ranks.
-         *
-         * Note: 'offset' indicates the distance to the rank we just sent to.
-         */
-        if (epoch_ltd) {
-            assert(corr_neigh <= corr_dist && "Optimisation broken");
-            size_t const handled_by_sender = corr_dist - corr_neigh;
-            offset = (offset > handled_by_sender) ? offset : handled_by_sender;
-        }
-
-        int receiver;
-
-        // Find the next receiver, but do not send to children
-        do {
-            ++offset;
-            receiver = rank + offset; // send to right
-        } while (is_child(receiver, num_child, children));
-
-        // Handle end of the chain (1st part) or end of correction (2nd part)
-        if (receiver >= size || offset > corr_dist) { break; }
-
-        err = CORRT_MPI_ISEND(buff,
-                         count,
-                         datatype,
-                         receiver,
-                         MCA_COLL_BASE_TAG_BCAST,
-                         comm,
-                         &reqs[req_corr_snd + offset - 1]);
+    if (corr_dist) {
+        err = do_correction(epoch_global,
+                            epoch_ltd,
+                            count,
+                            datatype,
+                            comm,
+                            buff,
+                            &corr_neigh);
         if (MPI_SUCCESS != err) { return err; }
-
-    } // end -- cover 'corr_dist' neighbours with 'offset'
-
+    }
 
     /* Wait for all (remaining) sends to finish since 'buff' may change after
      * we return to the user. Just ignore the return value as sends may fail.
