@@ -1,4 +1,5 @@
 #include <assert.h>
+#include <mpi.h>
 #include <stdlib.h>
 
 #include "corrected_lame-tree.h"
@@ -56,7 +57,7 @@ setup_tree_lame_start(int const id, int const k)
 }
 
 
-bool
+int
 setup_tree_lame(int const rank, int const comm_size,
                 size_t *num_child, size_t *parent, size_t **children)
 {
@@ -69,11 +70,11 @@ setup_tree_lame(int const rank, int const comm_size,
     //       so we can check consistency...
     for (int sender = 0; sender < comm_size; ++sender) {
         int lvl = setup_tree_lame_start(sender, k);
-        if (lvl < 0) { return false; }
+        if (lvl < 0) { return CORRT_ERR_WRONG_ARG; }
 
-        while (true) {
+        while (1) {
             int const rts = setup_tree_lame_ready_to_send(lvl + k - 1, k);
-            if (rts < 0) { return false; }
+            if (rts < 0) { return CORRT_ERR_WRONG_ARG; }
 
             int const receiver = sender + rts;
             if (receiver >= comm_size) { break; }
@@ -92,7 +93,7 @@ setup_tree_lame(int const rank, int const comm_size,
             // prepare/enlarge child array
             // TODO: better allocation would be nice ... setup is a one-shot function though
                 *children = realloc(*children, *num_child * sizeof(size_t) );
-                if (!*children) { return false; }
+                if (!*children) { return CORRT_ERR_NO_MEM; }
 
                 (*children)[*num_child - 1] = receiver;
             }
@@ -102,5 +103,5 @@ setup_tree_lame(int const rank, int const comm_size,
 
     assert(parent_tmp >= 0 && "No parent found");
     *parent = parent_tmp;
-    return true;
+	 return CORRT_ERR_SUCCESS;
 }
