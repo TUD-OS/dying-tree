@@ -11,6 +11,7 @@
 #include "util.h"
 #include "corrected_binomial-tree.h"
 #include "corrected_lame-tree.h"
+#include "corrected_gossip.h"
 
 
 
@@ -195,7 +196,7 @@ setup_diss_graph(int const rank, int const comm_size)
            parents  == NULL &&
            children == NULL && "Graph already initialised");
 
-    char const * const graph_type = read_env_or_fail("DISS_TYPE");
+    char const * const graph_type = read_env_or_fail("CORRT_DISS_TYPE");
 
     // generic for all trees -> single parent
     if (0 == strncmp(graph_type, "tree_", 5)) {
@@ -211,8 +212,7 @@ setup_diss_graph(int const rank, int const comm_size)
         return setup_tree_lame(rank, comm_size, &num_child, parents, &children);
     }
     if (0 == strncmp(graph_type, "gossip", 6)) {
-        assert(0 && "Gossip not done yet");
-        return CORRT_ERR_NOT_IMPL;
+        return setup_gossip(rank, comm_size, &num_child, &num_parent, &parents, &children);
     }
 
     fprintf(stderr, "Unknown dissemination: '%s'\n"
