@@ -494,10 +494,13 @@ receive_initial_message(unsigned long long const epoch_global, // IN
 
                 // Note: The previous *must* be done before we reactivate the send! Races...
 
-                // This will have an effect on our own correction if the sender was
-                // closer to us than any previous sender (in this epoch)
-                size_t const dist = idx - req_corr_rcv;
-                if (dist < *corr_neigh) { *corr_neigh = dist; }
+                // If this was a correction, it will have an effect on our own
+                // correction iff the sender was closer to us than any previous
+                // sender (in this epoch)
+                if (idx >= req_corr_rcv) {
+                    size_t const dist = idx - req_corr_rcv;
+                    if (dist < *corr_neigh) { *corr_neigh = dist; }
+                }
             }
             // Future message
             // Note: Nothing special to do for stale messages, just ignore them
@@ -648,7 +651,6 @@ do_correction(unsigned long long const epoch_global, // IN
 
                         // keep track of the closest sender
                         // (unless the message came from our parent)
-                        // Note: 'idx' "conincidentely" is our distance from the sender
                         if (idx >= req_corr_rcv && dist < corr_neigh) {
                             corr_neigh = dist;
                         }
