@@ -33,6 +33,8 @@
 
     #define CORRT_MPI_ISEND(A,B,C,D,E,F,G) \
         MCA_PML_CALL(isend(A,B,C,D,E,F,G))
+    #define CORRT_MPI_SEND(A,B,C,D,E,F) \
+        MCA_PML_CALL(send(A,B,C,D,E,F))
     #define CORRT_MPI_RECV_INIT(A,B,C,D,E,F,G) \
         MCA_PML_CALL(irecv_init(A,B,C,D,E,F,G))
     #define CORRT_MPI_START(A) \
@@ -66,6 +68,8 @@
 
     #define CORRT_MPI_ISEND(A,B,C,D,E,F,G) \
         PMPI_Isend(A,B,C,D,E,F,G)
+    #define CORRT_MPI_SEND(A,B,C,D,E,F) \
+        PMPI_Send(A,B,C,D,E,F)
     #define CORRT_MPI_RECV_INIT(A,B,C,D,E,F,G) \
         PMPI_Recv_init(A,B,C,D,E,F,G)
     #define CORRT_MPI_START(A) \
@@ -104,6 +108,8 @@ static size_t num_child  = 0xBEEFBABE, // number of child ranks
               num_parent = 0xBEEFBABE, // number of parent ranks (1 for trees)
               *parents   = NULL,       // array of parent ranks
               *children  = NULL;       // array of child ranks
+
+
 
 /* Dedicated buffers for each of our receives; 'count_max' entries each
  *
@@ -164,6 +170,17 @@ static unsigned long long *epoch_neigh = NULL;
  * actually not needed as we never get future messages from parents.
  */
 static bool *buff_fut = NULL;
+
+
+/* Gossip-specific values
+ *
+ * In our simplified Gossip we assign 'gossip_rounds' children to each node.
+ * However, most nodes will not actually send to all of them. So we need to
+ * keep the number of children we did send to for correction optimisation.
+ */
+static size_t num_child_diss;
+
+
 
 
 /* Arrays used for 'Testsome'/'Waitsome' ('static' to avoid stack allocation) */
@@ -235,12 +252,15 @@ is_member(size_t const ele,
     return false;
 }
 
-/* Test whether 'rank' is one of our children (i.e. is in the 'children' array) */
+/* Test whether 'rank' is one of our children (i.e. is in the 'children' array)
+ *
+ * Note: Do not consider children skipped in dissemination! (only relevant for Gossip)
+ */
 static inline bool
 is_child(size_t const rank)
 {
     assert(!is_member(0, num_child, children) && "Root is this node's child?!");
-    return is_member(rank, num_child, children);
+    return is_member(rank, num_child_diss, children);
 }
 
 /* Test whether 'rank' is one of our parents (i.e. is in the 'parents' array) */
@@ -592,7 +612,8 @@ do_correction(unsigned long long const epoch_global, // IN
                                          indices,             // array of indices
                                          statuses);           // array of statuses
             }
-            assert(completed != MPI_UNDEFINED && "No active requests!?");
+//             assert(completed != MPI_UNDEFINED) && "No active requests!?");
+//             --> not for Gossip's root node
 
             /* From the MPI standard:
              * "The call will return the error code MPI_ERR_IN_STATUS and the
@@ -727,13 +748,20 @@ corrected_broadcast(void *const buff,
                     int const root,
                     MPI_Comm const comm)
 {
+    // If we perform Gossip, keep the number of rounds to do
+    int const gossip_rounds = ( 0 == strncmp(read_env_or_fail("CORRT_DISS_TYPE"), "gossip", 6) ?
+                                read_env_int("CORRT_GOSSIP_ROUNDS") : -1 );
+    assert(gossip_rounds <= 127 && "Too many Gossip rounds");
+
+
     /* Reject unexpected parameters ... it's only a prototype after all
      *
      * Also note that we're "stealing" the first 'char' in the user data to
      * trasmit the epoch. In a real implementation this would instead be part
      * of OMPI's internal metadata that establishes message order anyways.
      */
-    if (root != 0 || datatype != MPI_CHAR || count < 1 || comm != MPI_COMM_WORLD) {
+    if (root != 0 || datatype != MPI_CHAR || count < (gossip_rounds >= 0 ? 2 : 1) || comm != MPI_COMM_WORLD) {
+        fprintf(stderr, "Unsupported parameters\n");
         return CORRT_ERR_NOT_IMPL;
     }
 
@@ -790,7 +818,10 @@ corrected_broadcast(void *const buff,
     if (1 == size) { return MPI_SUCCESS; } // that was simple :-)
 
     // Reject unexpected parameters ... it's only a prototype after all
-    if ( (size_t)count > count_max ) { return CORRT_ERR_NOT_IMPL; }
+    if ( (size_t)count > count_max ) {
+        fprintf(stderr, "Message larger then specified maximum\n");
+        return CORRT_ERR_NOT_IMPL;
+    }
 
 
     /* On the first call to this function, i.e. the very first bcast, allocate
@@ -858,11 +889,16 @@ corrected_broadcast(void *const buff,
     assert(reqs && epoch_neigh && buff_fut && buffers && statuses && indices && (!num_child || children) && (!num_parent || parents) && "Memory not properly allocated.");
     assert( (rank != root || (MPI_REQUEST_NULL == reqs[req_diss_rcv]) ) && "Root with active diss recv");
     assert( (rank == root || !num_parent || (MPI_REQUEST_NULL != reqs[req_diss_rcv]) ) && "Non-root, non-orphaned node w/o (at least one) active diss recv");
+    assert( (gossip_rounds < 0 || gossip_rounds == num_child) && "Inconsistent Gossip state");
 
 
     // Current epoch, limited to the size of a 'char' or rather 'epoch_wrap'
     // This is what we send around with the user's payload
     char const epoch_ltd = epoch_global % epoch_wrap;
+
+    // Reset children we send to; normal case for trees, max for Gossip
+    num_child_diss = num_child;
+
 
     /* Keep track which of our correction partners already sent a message to us
      *
@@ -879,6 +915,11 @@ corrected_broadcast(void *const buff,
     if (rank == root) {
         // Add limited-size epoch to message (sacrificing part of user data)
         ((char*)buff)[0] = epoch_ltd;
+
+        // Add remaining Gossip rounds to message (sacrificing more user data)
+        if (gossip_rounds >= 0) {
+            ((char*)buff)[1] = (char)gossip_rounds;
+        }
     }
     // Non-root nodes need to receive a message first, recvs are already posted
     else {
@@ -892,24 +933,63 @@ corrected_broadcast(void *const buff,
 
 
     // At this point, 'buff' unconditionally contains the user's data. The
-    // first 'char' has been overwritten with our (limited) epoch.
+    // first 'char' has been overwritten with our (limited) epoch and for
+    // Gossip the second 'char' contains the rounds left to go.
 
 
     /* Bulk-send tree messages to all our children */
     for (size_t offset = 0; offset < num_child; ++offset) {
         size_t const child = children[offset];
         assert(is_child(child) && "Inconsistent children");
+        assert(req_diss_snd + offset < req_corr_snd && "Too many diss snds");
 
-        assert(req_diss_snd + offset < req_corr_snd && "Too many tree snds");
-        err = CORRT_MPI_ISEND(buff,
-                         count,
-                         datatype,
-                         child,
-                         MCA_COLL_BASE_TAG_BCAST,
-                         comm,
-                         &reqs[req_diss_snd + offset]);
+        // We don't do Gossip at all but a tree ... simply send asynchronously
+        if (gossip_rounds < 0) {
+            err = CORRT_MPI_ISEND(buff,
+                             count,
+                             datatype,
+                             child,
+                             MCA_COLL_BASE_TAG_BCAST,
+                             comm,
+                             &reqs[req_diss_snd + offset]);
+        }
+
+        else {
+            // How many rounds are actually still left?
+            //
+            // We simplify Gossip a bit by not using real wallclock time
+            // for the rounds. Instead, each message "consumes" exactly one
+            // round, i.e., the receiver will send one message less then the
+            // node that sent to him.
+            //
+            // For this to work, we tell the receiver how many rounds are still
+            // left for him to do.
+
+            char *const rounds_left = &(((char*)buff)[1]);
+            assert(*rounds_left >= 0 && "Message should not have been sent");
+
+            // Gossip already finished
+            if (*rounds_left == 0) {
+                num_child_diss = offset; // we skip the remaining children
+                break;
+            }
+
+            // Gossip still running
+            else {
+                // one round done by sending this
+                --(*rounds_left);
+
+                err = CORRT_MPI_SEND(buff,
+                                     count,
+                                     datatype,
+                                     child,
+                                     MCA_COLL_BASE_TAG_BCAST,
+                                     comm);
+            }
+        }
+
         if (MPI_SUCCESS != err) { return err; }
-    }
+    } //end -- send all dissemination messages
 
     assert(corr_neigh <= corr_dist && "Optimisation broken");
     assert((corr_neigh > 0 || !corr_dist) && "Optimisation broken");

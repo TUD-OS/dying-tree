@@ -18,14 +18,13 @@ setup_gossip(int const rank, int const comm_size,
         return CORRT_ERR_WRONG_ARG;
     }
 
-    srandom(read_env_int("CORRT_GOSSIP_SEED")); // init ramdomness, same for all ranks!
+    srandom(read_env_int("CORRT_GOSSIP_SEED")); // init randomness, same for all ranks!
 
-    int const i_rounds = read_env_int("CORRT_GOSSIP_ROUNDS");
-    assert(i_rounds > 0 && "Invalid number of Gossip rounds");
-    size_t const rounds = (size_t)i_rounds;
+    size_t const rounds = (size_t)read_env_int("CORRT_GOSSIP_ROUNDS");
+    assert(rounds > 0 && "Invalid number of Gossip rounds");
 
     // we will have 'rounds' children and up to 'rounds * (comm_size - 1)'
-    // parents in (the worst possible) case that everybody else sends only to us
+    // parents in (the worst possible) case where everybody else sends only to us
     *num_child = rounds;
     *children  = malloc( *num_child * sizeof(size_t) );
 
