@@ -440,7 +440,8 @@ receive_initial_message(unsigned long long const epoch_global, // IN
         else {
             assert(buffers[idx * count_max] >= 0 && "Negative epoch rcvd");
             assert( (epoch_neigh[idx] % epoch_wrap) == (unsigned char)buffers[idx * count_max] && "Future message with wrong epoch");
-            assert(0 == memcmp(buff, &buffers[idx * count_max], count * sizeof(char)) && "Differing payloads for same epoch");
+//             assert(0 == memcmp(buff, &buffers[idx * count_max], count * sizeof(char)) && "Differing payloads for same epoch");
+//             --> not with Gossip
         }
 
         // This will have an effect on our own correction if the sender was
@@ -518,7 +519,12 @@ receive_initial_message(unsigned long long const epoch_global, // IN
                 // correction iff the sender was closer to us than any previous
                 // sender (in this epoch)
                 if (idx >= req_corr_rcv) {
-                    size_t const dist = idx - req_corr_rcv;
+                    size_t const dist = idx - req_corr_rcv + 1; // distance between sender and us
+                                                                // req_corr_rcv is 1 from us,
+                                                                // req_corr_rcv + 1 is 2 from us, ...
+
+                    assert(dist == (rank - status.MPI_SOURCE) && "Unexpected index for sender");
+
                     if (dist < *corr_neigh) { *corr_neigh = dist; }
                 }
             }
@@ -648,6 +654,8 @@ do_correction(unsigned long long const epoch_global, // IN
                 // receive finished
                 else {
                     size_t const dist = idx - req_corr_rcv + 1; // distance between sender and us
+                                                                // req_corr_rcv is 1 from us,
+                                                                // req_corr_rcv + 1 is 2 from us, ...
 
                     assert( (MPI_SUCCESS == err || MPI_SUCCESS == status.MPI_ERROR) && "Failed recv");
 //                     assert(rank > status.MPI_SOURCE && "Correction from right neighbour (or weird/small parent rank)");
