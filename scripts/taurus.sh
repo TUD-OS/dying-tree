@@ -10,7 +10,7 @@
 
 export MODULEPATH=~s9951545/.modules:$MODULEPATH
 
-module add ompi/3.0.1rc4-opt gcc/7.1.0 parallel 2>/dev/null
+module add OpenMPI/3.1.1-GCC-7.3.0-2.30 parallel 2>/dev/null
 
 SCRIPTDIR="$( cd "$( dirname "$0" )" && pwd )"
 BASEDIR=$SCRATCH/corrected-mpi
