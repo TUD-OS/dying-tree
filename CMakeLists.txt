@@ -22,8 +22,10 @@ SET_SOURCE_FILES_PROPERTIES(
 SET_SOURCE_FILES_PROPERTIES(dying.c OBJECT_DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/dying_wrap.h)
 set(CMAKE_INCLUDE_CURRENT_DIR ON)
 
-string(APPEND CMAKE_SHARED_LINKER_FLAGS " -Wl,--no-undefined")
-string(APPEND CMAKE_C_FLAGS             " -fdiagnostics-color=always -fstrict-overflow -Wstrict-overflow")
+IF(CMAKE_COMPILER_IS_GNUCXX)
+  string(APPEND CMAKE_SHARED_LINKER_FLAGS " -Wl,--no-undefined")
+  string(APPEND CMAKE_C_FLAGS             " -fdiagnostics-color=always -fstrict-overflow -Wstrict-overflow")
+ENDIF(CMAKE_COMPILER_IS_GNUCXX)
 
 add_wrapped_file(dying_wrap.h dying_wrap.w)
 add_library(dying SHARED
