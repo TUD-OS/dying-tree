@@ -21,7 +21,7 @@ setup_gossip(int const rank, int const comm_size,
     srandom(read_env_int("CORRT_GOSSIP_SEED")); // init randomness, same for all ranks!
 
     size_t const rounds = (size_t)read_env_int("CORRT_GOSSIP_ROUNDS");
-    assert(rounds > 0 && "Invalid number of Gossip rounds");
+//     assert(rounds > 0 && "Invalid number of Gossip rounds");
 
     // we will have 'rounds' children and up to 'rounds * (comm_size - 1)'
     // parents in (the worst possible) case where everybody else sends only to us
@@ -30,7 +30,9 @@ setup_gossip(int const rank, int const comm_size,
 
     *num_parent = rounds * (comm_size - 1);
     *parents    = malloc( *num_parent * sizeof(size_t) );
-    if (!*children || !*parents) { return CORRT_ERR_NO_MEM; }
+    if ((*num_child && !*children) || (*num_parent && !*parents)) {
+        return CORRT_ERR_NO_MEM;
+    }
 
     // figure out who our relatives are
     //
