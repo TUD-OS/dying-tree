@@ -153,21 +153,20 @@ size_t req_diss_rcv = 0,
 /* We keep the absolute epoch our correction partners are in.
  *
  * These values might not be accurate but rather a lower bound because
- * correction (but not dissemination!) messages are optimised away.
+ * correction messages are optimised away. For trees, the dissemination
+ * messages will always be sent but Gossip may sometimes skip some children
+ * depending on the Gossip round we get a message from.
  *
  * The indices are consistent with those in 'buffers'.
  */
-static unsigned long long *epoch_neigh = NULL;
+typedef unsigned int epoch_t;
+static epoch_t *epoch_neigh = NULL;
 
 /* Does the respective rank's entry in 'buffers' contain valid data?
  *
  * This is the case if we already received a "future" broadcast from
  * a faster rank. (Only!) Then the corresponding rcv operation in 'reqs'
  * will be inactive.
- *
- * Note that, in order to keep the indices consistent with those in 'buffers',
- * we waste some memory and also allocate elements for parent nodes. Those are
- * actually not needed as we never get future messages from parents.
  */
 static bool *buff_fut = NULL;
 
@@ -298,7 +297,7 @@ allocate_buffers()
      * of that message, which is held in the neighbour's rcv buffer and note
      * that there's pending future message via 'buff_fut'.
      */
-    epoch_neigh = calloc(num_parent + corr_dist, sizeof(long long));
+    epoch_neigh = calloc(num_parent + corr_dist, sizeof(epoch_t));
     if (!epoch_neigh) { return CORRT_ERR_NO_MEM; }
 
     // Flags to keep track of already-received future messages ('0'/'false' -> no future message received)
@@ -323,6 +322,9 @@ allocate_buffers()
     return MPI_SUCCESS;
 }
 
+
+#if 0
+// not used anymore since Gossip forces us to send full epochs
 
 /* Check received message and (potentially) update our view of the sender's epoch
  *
@@ -378,10 +380,34 @@ update_epoch_neigh(unsigned long long const        epoch_global,
 
     return *epoch_neigh == epoch_global;
 }
+#endif
+
+/* Check received message and (potentially) update our view of the sender's epoch
+ *
+ * returns 'true' if message is from current epoch,
+ *         'false' for stale or future messages
+ */
+static inline bool
+update_epoch_neigh(epoch_t const        epoch_global,
+                   epoch_t       *const epoch_neigh,
+                   char    const *const buffer)
+{
+    /* Messages (including messages from our parents) might be
+     * stale, i.e. still left over from previous epochs. We also need
+     * to keep our view on other rank's epochs updated.
+     */
+    epoch_t const epoch_rcvd = ((epoch_t*)buffer)[0];
+
+    // Update the sender's epoch
+    *epoch_neigh = epoch_rcvd;
+
+    // For the received epoch to be "correct" it needs to match our epoch.
+    return *epoch_neigh == epoch_global;
+}
 
 
-/* Any non-root node must keep receiving until we get the message for the
- * current epoch. While doing this, also handle message from past and future
+/* Any non-root node must keep receiving until it gets the message for the
+ * current epoch. While doing this, we also handle message from past and future
  * epochs.
  *
  * Receive buffers are active iff no future messages was received on them and
@@ -390,40 +416,25 @@ update_epoch_neigh(unsigned long long const        epoch_global,
  * return MPI status code
  */
 static inline int
-receive_initial_message(unsigned long long const epoch_global, // IN
-                        char               const epoch_ltd,    // IN
-                        int                const count,        // IN
-                        void              *const buff,         // OUT
-                        size_t            *const corr_neigh    // IN+OUT
+receive_initial_message(epoch_t const epoch_global, // IN
+                        int     const count,        // IN
+                        void   *const buff,         // OUT
+                        size_t *const corr_neigh    // IN+OUT
                        )
 {
-    assert(epoch_global % epoch_wrap == (unsigned char) epoch_ltd && "Wrong limited epoch");
-
     size_t idx; // index (in basically all the global arrays) of (last) successful rcv request
     bool   done = false; // got a message (for current epoch) yet?
     int    err  = MPI_SUCCESS;
 
-    /* We might already have received a/some "future" corr message(s) for
+    /* We might already have received a/some "future" message(s) for
      * the current epoch...
      *
-     * Note that we need to find *all* "future" corr messages for this
+     * Note that we need to find *all* "future" messages for this
      * epoch and re-enable the respective receives.
-     *
-     * Note that, by design, we never receive future messages from our
-     * parents.
      */
-    for (idx = req_diss_rcv; idx < req_corr_rcv; ++idx) {
-        assert(!buff_fut[idx] && "Future message from parent");
-    }
-    for (idx = req_corr_rcv; idx < req_diss_snd; ++idx) {
+    for (idx = req_diss_rcv; idx < req_diss_snd; ++idx) {
         // Only exact epoch matches are relevant here
         if ( ! (buff_fut[idx] && epoch_neigh[idx] == epoch_global) ) {
-            /* Should at most be from the start of the next hyperepoch:
-             * Everybody sends at that point and we stop receiving once
-             * we got any message from the future.
-             */
-            assert(epoch_neigh[idx] < ((epoch_global / epoch_wrap) + 1) * epoch_wrap || "Message from far future");
-
             continue;
         }
 
@@ -436,16 +447,12 @@ receive_initial_message(unsigned long long const epoch_global, // IN
             memcpy(buff, &buffers[idx * count_max], count);
             done = true;
         }
-        // use the opportunity of two future messages to check for consistency
-        else {
-            assert(buffers[idx * count_max] >= 0 && "Negative epoch rcvd");
-            assert( (epoch_neigh[idx] % epoch_wrap) == (unsigned char)buffers[idx * count_max] && "Future message with wrong epoch");
-//             assert(0 == memcmp(buff, &buffers[idx * count_max], count * sizeof(char)) && "Differing payloads for same epoch");
-//             --> not with Gossip
-        }
 
-        // This will have an effect on our own correction if the sender was
-        // closer to us than any previous sender (in this epoch)
+        // For diss messages we are done at this point
+        if (idx < req_corr_rcv) { continue; }
+
+        // This message will have an effect on our own correction if its
+        // sender was closer to us than any previous sender (in this epoch)
         size_t const dist = idx - req_corr_rcv;
         if (dist < *corr_neigh) { *corr_neigh = dist; }
 
@@ -458,12 +465,7 @@ receive_initial_message(unsigned long long const epoch_global, // IN
     /* If we don't have the message for this epoch yet, wait for anybody to
      * send it to us: drop stale messages, reactivate recvs, store the
      * payload in the user's buffer once rcv'd and properly handle "future"
-     * corr messages
-     *
-     * Note that we will not see future dissemination messages here since we
-     * exit the loop once we have the current message and our parent(s) *never*
-     * skip epochs, i.e. we get one message per epoch ... except when the
-     * parent is dead for good.
+     * messages
      */
     while (!done) {
         int completed = MPI_UNDEFINED; // better be safe and initialise it
@@ -487,17 +489,15 @@ receive_initial_message(unsigned long long const epoch_global, // IN
 
             assert(status.MPI_SOURCE >= 0 && "Invalid sender rank");
             assert( (idx < req_corr_rcv || (rank - status.MPI_SOURCE > 0)) && "Correction message from our right");
-//             assert(idx == ( (unsigned)status.MPI_SOURCE == parent ? 0U : rank - (unsigned)status.MPI_SOURCE ) && "Unexpected index for sender");
-//             -> invalid for Gossip
+            assert( ((idx < req_corr_rcv && (unsigned)status.MPI_SOURCE == parents[idx]) || // rcv from parent
+                     (idx - req_corr_rcv + 1) == (rank - status.MPI_SOURCE) ) && "Unexpected index for sender");
 
             /* Note that 'idx' "incidentally" corresponds to the sender rank's
              * entries not only in 'reqs' but also 'buffers' and 'epoch_neigh'.
              */
             bool matches = update_epoch_neigh(epoch_global,
-                                              epoch_ltd,
                                               &epoch_neigh[idx],
                                               &buffers[idx * count_max]);
-
             assert(matches == (epoch_neigh[idx] == epoch_global) && "Function broken!?");
 
 
@@ -510,13 +510,14 @@ receive_initial_message(unsigned long long const epoch_global, // IN
                 }
                 // ... or use the opportunity for a consistency check
                 else {
-                    assert(0 == memcmp(buff, &buffers[idx * count_max], count * sizeof(char)) && "Differing payloads for same epoch");
+//                     assert(0 == memcmp(buff, &buffers[idx * count_max], count * sizeof(char)) && "Differing payloads for same epoch");
+                    //  -> not valid for Gossip ... but we may want to find the Gossip message with the smallest number of rounds left if we have multiple... TODO?
                 }
 
                 // Note: The previous *must* be done before we reactivate the send! Races...
 
                 // If this was a correction, it will have an effect on our own
-                // correction iff the sender was closer to us than any previous
+                // correction iff its sender was closer to us than any previous
                 // sender (in this epoch)
                 if (idx >= req_corr_rcv) {
                     size_t const dist = idx - req_corr_rcv + 1; // distance between sender and us
@@ -531,8 +532,6 @@ receive_initial_message(unsigned long long const epoch_global, // IN
             // Future message
             // Note: Nothing special to do for stale messages, just ignore them
             else if (epoch_neigh[idx] > epoch_global) {
-                assert(idx >= req_corr_rcv && "Future diss message from parent");
-
                 buff_fut[idx] = true;
                 continue; // do *not* reactivate the rcv nor increase the epoch
             }
@@ -553,8 +552,8 @@ receive_initial_message(unsigned long long const epoch_global, // IN
 /*
  * Send correction messages to our 'corr_dist' right neighbours
  *
- * Do not send to our children or to root (implicitly since it's either to
- * our "left" or "beyond the chain" as we don't close the ring).
+ * Do not send to our children or to root (implicitly since it's either "to
+ * our left" or "beyond the end of the chain" as we don't close the ring).
  *
  * As a (possible) optimisation, we send corrections one by one, omitting
  * corr messages to those ranks that we know will be covered be others
@@ -572,17 +571,14 @@ receive_initial_message(unsigned long long const epoch_global, // IN
  * return MPI status code
  */
 static inline int
-do_correction(unsigned long long const epoch_global, // IN
-              char               const epoch_ltd,    // IN
-              int                const count,        // IN
-              MPI_Datatype       const datatype,     // IN
-              MPI_Comm           const comm,         // IN
-              void      const   *const buff,         // IN
-              size_t                   corr_neigh    // IN (+modified locally)
+do_correction(epoch_t      const epoch_global, // IN
+              int          const count,        // IN
+              MPI_Datatype const datatype,     // IN
+              MPI_Comm     const comm,         // IN
+              void         const *const buff,  // IN
+              size_t             corr_neigh    // IN (+modified locally)
 )
 {
-    assert(epoch_ltd == epoch_global % epoch_wrap);
-
     int    err    = MPI_SUCCESS;
     bool   first  = true; // first round in the correction phase?
     size_t offset = 0;    // offset of node to send to currently
@@ -605,10 +601,10 @@ do_correction(unsigned long long const epoch_global, // IN
             if (first) {
                 // do not wait yet, just check if any requests are already done
                 err = CORRT_MPI_TESTSOME(req_past_end - req_diss_rcv, // incount
-                                    &reqs[req_diss_rcv], // array of requests
-                                    &completed,          // outcount
-                                    indices,             // array of indices
-                                    statuses);           // array of statuses
+                                         &reqs[req_diss_rcv], // array of requests
+                                         &completed,          // outcount
+                                         indices,             // array of indices
+                                         statuses);           // array of statuses
                 first = false;
             }
             else {
@@ -619,7 +615,7 @@ do_correction(unsigned long long const epoch_global, // IN
                                          statuses);           // array of statuses
             }
 //             assert(completed != MPI_UNDEFINED) && "No active requests!?");
-//             --> not for Gossip's root node
+//             --> not for Gossip's root node as Gossip sends synchronously
 
             /* From the MPI standard:
              * "The call will return the error code MPI_ERR_IN_STATUS and the
@@ -636,15 +632,15 @@ do_correction(unsigned long long const epoch_global, // IN
             for (int cc = 0; cc < completed; ++cc) {
                 assert(indices[cc] >= 0 && "Test/Waitsome broken!?");
 
-                size_t           const    idx = indices[cc];  // convienince...
-                CORRT_MPI_STATUS const status = statuses[cc]; // copies :-)
+                size_t           const    idx = indices[cc];  // convenience...
+                CORRT_MPI_STATUS const status = statuses[cc]; // ...copies :-)
 
-                // send finished
+                // send operation finished
                 if (idx >= req_diss_snd) {
                     // Was it a (i.e. our current) corr message?
                     // Note: We don't care much about tree sends here...
                     if (idx >= req_corr_snd) {
-                        assert(idx == req_corr_snd + offset - 1 && "Unexpected send ");
+                        assert(idx == req_corr_snd + offset - 1 && "Unexpected send");
                         done = true;
                     }
 
@@ -666,7 +662,6 @@ do_correction(unsigned long long const epoch_global, // IN
                      * entries not only in 'reqs' but also 'buffers' and 'epoch_neigh'.
                      */
                     bool matches = update_epoch_neigh(epoch_global,
-                                                      epoch_ltd,
                                                       &epoch_neigh[idx],
                                                       &buffers[idx * count_max]);
 
@@ -676,7 +671,8 @@ do_correction(unsigned long long const epoch_global, // IN
                     if (matches) {
                         // ... use the opportunity for a consistency check
                         // Note: This *must* be done before we reactivate the send! Races...
-                        assert(0 == memcmp(buff, &buffers[idx * count_max], count * sizeof(char)) && "Differing payloads for same epoch");
+//                         assert(0 == memcmp(buff, &buffers[idx * count_max], count * sizeof(char)) && "Differing payloads for same epoch");
+//                         -> not with Gossip
 
                         // keep track of the closest sender
                         // (unless the message came from our parent)
@@ -706,18 +702,13 @@ do_correction(unsigned long long const epoch_global, // IN
          * sent to us are not bothered by us as well. The other guy (that just
          * sent to us) will reach those faster anyway.
          *
-         * Skip this optimisation at the start of new hyper epochs
-         * ('epoch_ltd' == 0). There we *always* send corrections to maintain
-         * the sync between different ranks.
-         *
          * Note: 'offset' indicates the distance to the rank we just sent to.
          */
-        if (epoch_ltd) {
-            assert(corr_neigh <= corr_dist && "Optimisation broken");
+        assert(corr_neigh <= corr_dist && "Optimisation broken");
 
-            size_t const handled_by_sender = corr_dist - corr_neigh;
-            offset = (offset > handled_by_sender) ? offset : handled_by_sender;
-        }
+        size_t const handled_by_sender = corr_dist - corr_neigh;
+        offset = (offset > handled_by_sender) ? offset : handled_by_sender;
+
 
         int receiver;
 
@@ -756,6 +747,9 @@ corrected_broadcast(void *const buff,
                     int const root,
                     MPI_Comm const comm)
 {
+    if (0 == count) { return MPI_SUCCESS; } // that was simple :-)
+
+
     // If we perform Gossip, keep the number of rounds to do
     int const gossip_rounds = ( 0 == strncmp(read_env_or_fail("CORRT_DISS_TYPE"), "gossip", 6) ?
                                 read_env_int("CORRT_GOSSIP_ROUNDS") : -1 );
@@ -768,7 +762,11 @@ corrected_broadcast(void *const buff,
      * trasmit the epoch. In a real implementation this would instead be part
      * of OMPI's internal metadata that establishes message order anyways.
      */
-    if (root != 0 || datatype != MPI_CHAR || count < (gossip_rounds >= 0 ? 2 : 1) || comm != MPI_COMM_WORLD) {
+    if (root != 0 ||
+        datatype != MPI_CHAR ||
+        count < (sizeof(epoch_t) + (gossip_rounds >= 0 ? sizeof(char) : 0)) ||
+        comm != MPI_COMM_WORLD) {
+
         fprintf(stderr, "Unsupported parameters\n");
         return CORRT_ERR_NOT_IMPL;
     }
@@ -845,7 +843,7 @@ corrected_broadcast(void *const buff,
 //             assert(parent < (unsigned)rank && "Invalid parent in tree");
 //             -> Not valid for Gossip
 
-            // ... a message from each of their parents
+            // ... a diss message from each of their parents
             for (size_t par = 0; par < num_parent; ++par) {
                 assert(parents[par] >= 0 && parents[par] < size && "Broken parent entry");
                 err = CORRT_MPI_RECV_INIT(&buffers[(req_diss_rcv + par) * count_max],
@@ -900,10 +898,6 @@ corrected_broadcast(void *const buff,
     assert( (gossip_rounds < 0 || gossip_rounds == num_child) && "Inconsistent Gossip state");
 
 
-    // Current epoch, limited to the size of a 'char' or rather 'epoch_wrap'
-    // This is what we send around with the user's payload
-    char const epoch_ltd = epoch_global % epoch_wrap;
-
     // Reset children we send to; normal case for trees, max for Gossip
     num_child_diss = num_child;
 
@@ -921,18 +915,17 @@ corrected_broadcast(void *const buff,
     size_t corr_neigh = corr_dist; // init. value will allow for no optimisation
 
     if (rank == root) {
-        // Add limited-size epoch to message (sacrificing part of user data)
-        ((char*)buff)[0] = epoch_ltd;
+        // Add epoch to message (sacrificing part of user data)
+        ((epoch_t*)buff)[0] = epoch_global;
 
         // Add remaining Gossip rounds to message (sacrificing more user data)
         if (gossip_rounds >= 0) {
-            ((char*)buff)[1] = (char)gossip_rounds;
+            ((char*) &(((epoch_t*)buff)[1]))[0] = (char)gossip_rounds;
         }
     }
     // Non-root nodes need to receive a message first, recvs are already posted
     else {
         err = receive_initial_message(epoch_global,
-                                      epoch_ltd,
                                       count,
                                       buff,
                                       &corr_neigh);
@@ -951,7 +944,7 @@ corrected_broadcast(void *const buff,
         assert(is_child(child) && "Inconsistent children");
         assert(req_diss_snd + offset < req_corr_snd && "Too many diss snds");
 
-        // We don't do Gossip at all but a tree ... simply send asynchronously
+        // We don't do Gossip but a proper tree ... simply send asynchronously
         if (gossip_rounds < 0) {
             err = CORRT_MPI_ISEND(buff,
                              count,
@@ -963,17 +956,19 @@ corrected_broadcast(void *const buff,
         }
 
         else {
-            // How many rounds are actually still left?
-            //
-            // We simplify Gossip a bit by not using real wallclock time
-            // for the rounds. Instead, each message "consumes" exactly one
-            // round, i.e., the receiver will send one message less then the
-            // node that sent to him.
-            //
-            // For this to work, we tell the receiver how many rounds are still
-            // left for him to do.
-
-            char *const rounds_left = &(((char*)buff)[1]);
+            /* How many rounds of Gossip are still left?
+             *
+             * We simplify Gossip a bit by not using real wallclock time
+             * for the rounds. Instead, each message "consumes" exactly one
+             * round, i.e., the receiver will send one message less then the
+             * node that sent to him.
+             *
+             * For this to work, we tell the receiver how many rounds are still
+             * left for him to do. Since this meand every child will get a
+             * different round, we need to send synchronously (or allocate
+             * multiple buffers which we don't)
+             */
+            char *const rounds_left = ((char*) &(((epoch_t*)buff)[1]));
             assert(*rounds_left >= 0 && "Message should not have been sent");
 
             // Gossip already finished
@@ -1002,10 +997,9 @@ corrected_broadcast(void *const buff,
     assert(corr_neigh <= corr_dist && "Optimisation broken");
     assert((corr_neigh > 0 || !corr_dist) && "Optimisation broken");
 
-    // If we don't do correction ('corr_dist' == 0), we can just skip that part
+    // If we don't do correction, we can just skip that part
     if (corr_dist) {
         err = do_correction(epoch_global,
-                            epoch_ltd,
                             count,
                             datatype,
                             comm,
@@ -1025,6 +1019,7 @@ corrected_broadcast(void *const buff,
                  MPI_STATUSES_IGNORE);
 
     ++epoch_global;
+    assert(epoch_global < (epoch_t)~0 && "Epoch about to overflow");
 
     assert(MPI_SUCCESS == err);
     return err;
