@@ -585,11 +585,6 @@ receive_initial_message(int     const count,        // IN
                     memcpy(buff, &buffers[idx * count_max], count);
                     done = true;
                 }
-                // ... or use the opportunity for a consistency check
-                else {
-//                     assert(0 == memcmp(buff, &buffers[idx * count_max], count * sizeof(char)) && "Differing payloads for same epoch");
-                    //  -> not valid for Gossip ... but we may want to find the Gossip message with the smallest number of rounds left if we have multiple... TODO?
-                }
 
                 // Note: The previous *must* be done before we reactivate the send! Races...
 
@@ -749,8 +744,6 @@ do_correction(int          const count,        // IN
                     if (matches) {
                         // ... use the opportunity for a consistency check
                         // Note: This *must* be done before we reactivate the send! Races...
-//                         assert(0 == memcmp(buff, &buffers[idx * count_max], count * sizeof(char)) && "Differing payloads for same epoch");
-//                         -> not with Gossip
 
                         // keep track of the closest sender
                         // (unless the message came from our parent)
