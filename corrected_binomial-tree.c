@@ -53,7 +53,7 @@ setup_tree_binomial(int const rank, int const comm_size,
         if ((*children)[cc] >= (unsigned const)comm_size) {
             *num_child = cc; // remember the new count (and implicitly exit loop)
             *children = realloc(*children, sizeof(size_t) * *num_child); // trim child list (optional memory optimisation)
-            assert(*children && "Out of memory while *shrinking* array");
+            assert((!*num_child || *children) && "Out of memory while *shrinking* array");
         }
     }
     return CORRT_ERR_SUCCESS;
