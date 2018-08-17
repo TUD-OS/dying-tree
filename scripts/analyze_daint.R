@@ -70,6 +70,8 @@ dirs <- c('08-40-37_020518.5448', '10-04-51_020518.21567')
 
 dirs <- c('08-11-27_030518.1892', '00-27-47_030518.31439', '08-06-15_030518.28618', '06-49-23_030518.13274', '07-09-50_030518.18168', '06-54-29_030518.14817')
 
+dirs <- c('18-04-20_160818.17474', '20-03-10_160818.1464')
+
 df <- FALSE
 for (dir in dirs) {
     df.cur <- read.csv(paste0('../logs/daint/', dir, '/table.csv'))  %>%
@@ -92,8 +94,6 @@ for (dir in dirs) {
     }
 }
 
-df$Nproc <- df$Nproc * 72
-
 colors <- c('#e41a1c', '#377eb8','#4daf4a','#984ea3', "#ff7f00", "black")
 ## fill <- scale_fill_manual(name="Broadcast", values=colors)
 col <- scale_color_manual(name="Broadcast", values=colors)
@@ -105,7 +105,7 @@ tikz('../../../../tree-broadcast/daint-latency.tex', width=3.2, height=2.0)
 df %>%
     filter(Size %in% c(8),
            CorrFull %in% c('Native (0)', 'Corrected (0)', 'Corrected (2)', 'Corrected (4)'),
-           TreeType == 'binomial',
+           TreeType == 'tree_binomial',
            FaultCount == 0) %>%
     mutate(CorrType = ifelse(CorrType == 'Native', 'Cray MPI', 'Corrected')) %>%
     ggplot(aes(as.factor(Nproc), AvgTime.50, group=paste0(CorrType, Corr), shape=factor(CorrType), lty=factor(Corr))) +
@@ -142,7 +142,7 @@ lty <- scale_linetype_manual(name="Faults", values=c(1, 2, 3, 4))
 tikz('../../../../tree-broadcast/daint-lame.tex', width=3.2, height=2.0)
 
 df %>%
-    mutate(TreeFull = ifelse(TreeType == 'binomial', 'Binomial', sprintf("Lam\\'e (%s)", LameK))) %>%
+    mutate(TreeFull = ifelse(TreeType == 'tree_binomial', 'Binomial', sprintf("Lam\\'e (%s)", LameK))) %>%
     filter(Size %in% c(8),
            TreeFull %in% c('Binomial', "Lam\\'e (2)"),
            Corr == 4,
@@ -173,7 +173,7 @@ tikz('../../../../tree-broadcast/daint-ribbon.tex', width=3.2, height=2.0)
 df %>%
     filter(Size %in% c(8, 256),
            CorrFull %in% c('Native (0)', 'Corrected (0)', 'Corrected (2)', 'Corrected (4)'),
-           TreeType == 'binomial',
+           TreeType == 'tree_binomial',
            FaultCount == 0) %>%
     ggplot(aes(Nproc, AvgTime.50, group=paste0(CorrType, Corr), shape=factor(CorrType), lty=factor(Corr))) +
     geom_ribbon(aes(ymin=AvgTime.25, ymax=AvgTime.75), alpha = 0.3)+ 
