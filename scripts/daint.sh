@@ -121,7 +121,7 @@ cd $WORKDIR
 # Size         Avg Latency(us)     Min Latency(us)     Max Latency(us)  Iterations
 echo "Type	Corr	Nnodes	Size	Avg	Min	Max	Iterations	Rep	Faults	GossipSeed	GossipRounds"
 
-OUTDIR=$(date "+%H-%M-%S_%d%m%y".$RANDOM)
+OUTDIR=$(date "+%d%m%y_%H-%M-%S".$RANDOM)
 mkdir $OUTDIR
 echo $OUTDIR
 
