@@ -27,9 +27,7 @@ IF(CMAKE_COMPILER_IS_GNUCXX)
   string(APPEND CMAKE_C_FLAGS             " -fdiagnostics-color=always -fstrict-overflow -Wstrict-overflow")
 ENDIF(CMAKE_COMPILER_IS_GNUCXX)
 
-add_wrapped_file(dying_wrap.h dying_wrap.w)
-add_library(dying SHARED
-  dying.c
+SET(CORRT_SRC
   util.c
   corrected_tree.c
   corrected_binomial-tree.c
@@ -37,4 +35,15 @@ add_library(dying SHARED
   corrected_gossip.c
   corrected_lame-tree.c
 )
+
+add_wrapped_file(dying_wrap.h dying_wrap.w)
+add_library(dying SHARED
+  dying.c
+  ${CORRT_SRC}
+)
 target_link_libraries(dying ${MPI_C_LIBRARIES})
+
+add_executable(corrt_profile
+  profile.c
+  ${CORRT_SRC}
+)
