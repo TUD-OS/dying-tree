@@ -813,11 +813,19 @@ do_correction(int          const count,        // IN
  * Core implementation of corrected broadcast
  */
 int
+#if IMPL_INSIDE_OMPI
+ompi_coll_base_bcast_intra_corrected(void *buff, int count,
+                                     struct ompi_datatype_t *datatype,
+                                     int root,
+                                     struct ompi_communicator_t *comm,
+                                     mca_coll_base_module_t *module)
+#else
 corrected_broadcast(void *const buff,
                     int const count,
                     MPI_Datatype const datatype,
                     int const root,
                     MPI_Comm const comm)
+#endif
 {
     if (0 == count) { return MPI_SUCCESS; } // that was simple :-)
 
