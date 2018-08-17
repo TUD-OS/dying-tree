@@ -829,6 +829,19 @@ corrected_broadcast(void *const buff,
 {
     if (0 == count) { return MPI_SUCCESS; } // that was simple :-)
 
+    // Current epoch or broadcast round ('static' to keep it around)
+    static unsigned long long epoch_global = 0;
+
+
+    // If we perform Gossip, keep the number of rounds to do
+    static int gossip_rounds = -1;
+    if (epoch_global == 0) {
+      gossip_rounds = ( 0 == strncmp(read_env_or_fail("CORRT_DISS_TYPE"), "gossip", 6) ?
+			read_env_int("CORRT_GOSSIP_ROUNDS") : -1 );
+    }
+    assert(gossip_rounds <= 127 && "Too many Gossip rounds");
+
+
     /* Reject unexpected parameters ... it's only a prototype after all
      *
      * Also note that we're "stealing" the first 'char' in the user data to
