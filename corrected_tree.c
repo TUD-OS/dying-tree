@@ -150,6 +150,12 @@ size_t req_diss_rcv = 0,
        req_corr_snd = 0xBEEFBABE,
        req_past_end = 0xBEEFBABE;
 
+
+// Current epoch or broadcast round
+typedef unsigned int epoch_t;
+static epoch_t epoch_global = 0;
+
+
 /* We keep the absolute epoch our correction partners are in.
  *
  * These values might not be accurate but rather a lower bound because
@@ -159,7 +165,6 @@ size_t req_diss_rcv = 0,
  *
  * The indices are consistent with those in 'buffers'.
  */
-typedef unsigned int epoch_t;
 static epoch_t *epoch_neigh = NULL;
 
 /* Does the respective rank's entry in 'buffers' contain valid data?
@@ -393,8 +398,7 @@ update_epoch_neigh(unsigned long long const        epoch_global,
  *         'false' for stale or future messages
  */
 static inline bool
-update_epoch_neigh(epoch_t const        epoch_global,
-                   epoch_t       *const epoch_neigh,
+update_epoch_neigh(epoch_t       *const epoch_neigh,
                    char    const *const buffer)
 {
     /* Messages (including messages from our parents) might be
@@ -421,8 +425,7 @@ update_epoch_neigh(epoch_t const        epoch_global,
  * return MPI status code
  */
 static inline int
-receive_initial_message(epoch_t const epoch_global, // IN
-                        int     const count,        // IN
+receive_initial_message(int     const count,        // IN
                         void   *const buff,         // OUT
                         size_t *const corr_neigh    // IN+OUT
                        )
@@ -500,8 +503,7 @@ receive_initial_message(epoch_t const epoch_global, // IN
             /* Note that 'idx' "incidentally" corresponds to the sender rank's
              * entries not only in 'reqs' but also 'buffers' and 'epoch_neigh'.
              */
-            bool matches = update_epoch_neigh(epoch_global,
-                                              &epoch_neigh[idx],
+            bool matches = update_epoch_neigh(&epoch_neigh[idx],
                                               &buffers[idx * count_max]);
             assert(matches == (epoch_neigh[idx] == epoch_global) && "Function broken!?");
 
@@ -576,8 +578,7 @@ receive_initial_message(epoch_t const epoch_global, // IN
  * return MPI status code
  */
 static inline int
-do_correction(epoch_t      const epoch_global, // IN
-              int          const count,        // IN
+do_correction(int          const count,        // IN
               MPI_Datatype const datatype,     // IN
               MPI_Comm     const comm,         // IN
               void         const *const buff,  // IN
@@ -666,8 +667,7 @@ do_correction(epoch_t      const epoch_global, // IN
                     /* Note that 'idx' "incidentally" corresponds to the sender rank's
                      * entries not only in 'reqs' but also 'buffers' and 'epoch_neigh'.
                      */
-                    bool matches = update_epoch_neigh(epoch_global,
-                                                      &epoch_neigh[idx],
+                    bool matches = update_epoch_neigh(&epoch_neigh[idx],
                                                       &buffers[idx * count_max]);
 
                     assert(matches == (epoch_neigh[idx] == epoch_global) && "Function broken!?");
@@ -768,9 +768,6 @@ corrected_broadcast(void *const buff,
         fprintf(stderr, "Unsupported parameters\n");
         return CORRT_ERR_NOT_IMPL;
     }
-
-    // Current epoch or broadcast round ('static' to keep it around)
-    static unsigned long long epoch_global = 0;
 
     int err = MPI_SUCCESS;
 
@@ -924,8 +921,7 @@ corrected_broadcast(void *const buff,
     }
     // Non-root nodes need to receive a message first, recvs are already posted
     else {
-        err = receive_initial_message(epoch_global,
-                                      count,
+        err = receive_initial_message(count,
                                       buff,
                                       &corr_neigh);
         if (MPI_SUCCESS != err) { return err; }
@@ -998,8 +994,7 @@ corrected_broadcast(void *const buff,
 
     // If we don't do correction, we can just skip that part
     if (corr_dist) {
-        err = do_correction(epoch_global,
-                            count,
+        err = do_correction(count,
                             datatype,
                             comm,
                             buff,
