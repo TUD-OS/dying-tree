@@ -177,7 +177,7 @@ do
 	echo "$DYING_LIST" > $OUTFILE
 	echo "$EXPERIMENT"
 
-	# echo "srun $EXPORT --cpu_bind=core -n $NPROC $OSU_DIR/osu_bcast -m $MSG_SIZE -f -i $ITERATION 2>/dev/null" >> $OUTFILE
+	echo "srun $EXPORT --cpu_bind=core -n $NPROC $OSU_DIR/osu_bcast -m $MSG_SIZE -f -i $ITERATION 2>/dev/null"
 	OUT=$(srun $EXPORT --cpu_bind=core -n $NPROC $OSU_DIR/osu_bcast -m $MSG_SIZE -f -i $ITERATION 2>/dev/null)
 	echo "$OUT"
 	echo "$OUT"  | tail -n +3 >> $OUTFILE
