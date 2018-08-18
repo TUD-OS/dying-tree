@@ -197,6 +197,43 @@ static int size, rank; // We only support COMM_WORLD, so these will be fixed
 
 
 /******************************************************************************
+ * Statistics                                                                 *
+ ******************************************************************************/
+#ifndef CORRT_DO_STATISTICS
+static void statistics_count_future(bool b) {}
+static void statistics_count_skipped(int a, bool b) {}
+void corrt_statistics_print() {}
+#else
+static size_t future[2] = {0,0}; // [0] = diss, [1] = corr
+static size_t skipped[2][3] = {9423,0,0};// [0][*] = regular, [1][*] = future
+                                         // [*][0] = min, [*][1] = max, [*][2] = sum (for avg)
+
+static void statistics_count_future(bool is_corr) {
+    ++future[is_corr];
+}
+
+static void statistics_count_skipped(int dist_saved, bool is_future) {
+    assert(dist_saved > 0 && "Nothing gained. Don't bother me.");
+    if (dist_saved < skipped[0][is_future]) { skipped[0][is_future] = dist_saved; }
+    if (dist_saved > skipped[1][is_future]) { skipped[1][is_future] = dist_saved; }
+    skipped[2][is_future] += dist_saved;
+}
+
+void corrt_statistics_print() {
+    if (rank != size/2) { return; } // let only one rank print
+    fprintf(stderr,
+            "Total number of future messages: %zd dissemination, %zd correction\n"
+            "Correction messages saved (regular): %zd (min), %zd (max), %f (avg)\n"
+            "Correction messages saved (future):  %zd (min), %zd (max), %f (avg)\n\n",
+            future[0], future[1],
+            (skipped[0][0] == 9423 ? 0 : skipped[0][0]), skipped[0][1], skipped[0][2]/(double)epoch_global,
+            (skipped[1][0] == 9423 ? 0 : skipped[1][0]), skipped[1][1], skipped[1][2]/(double)epoch_global);
+}
+#endif
+
+
+
+/******************************************************************************
  * Generic helper functions                                                   *
  ******************************************************************************/
 
@@ -446,6 +483,8 @@ receive_initial_message(int     const count,        // IN
             continue;
         }
 
+        statistics_count_future(idx >= req_corr_rcv);
+
         /* We actually got the right message, store it in the user's buffer.
          * Doing this once is enough however.
          *
@@ -462,7 +501,10 @@ receive_initial_message(int     const count,        // IN
         // This message will have an effect on our own correction if its
         // sender was closer to us than any previous sender (in this epoch)
         size_t const dist = idx - req_corr_rcv;
-        if (dist < *corr_neigh) { *corr_neigh = dist; }
+        if (dist < *corr_neigh) {
+            statistics_count_skipped(*corr_neigh - dist, true);
+            *corr_neigh = dist;
+        }
 
         // Reactivate the receive request, now that we caught up
         err = CORRT_MPI_START(&reqs[idx]);
@@ -533,7 +575,10 @@ receive_initial_message(int     const count,        // IN
 
                     assert(dist == (rank - status.MPI_SOURCE) && "Unexpected index for sender");
 
-                    if (dist < *corr_neigh) { *corr_neigh = dist; }
+                    if (dist < *corr_neigh) {
+                        statistics_count_skipped(*corr_neigh - dist, false);
+                        *corr_neigh = dist;
+                    }
                 }
             }
             // Future message
@@ -682,6 +727,7 @@ do_correction(int          const count,        // IN
                         // keep track of the closest sender
                         // (unless the message came from our parent)
                         if (idx >= req_corr_rcv && dist < corr_neigh) {
+                            statistics_count_skipped(corr_neigh - dist, false);
                             corr_neigh = dist;
                         }
                     }

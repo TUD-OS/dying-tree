@@ -1,5 +1,6 @@
 // forward declaration
 int corrected_broadcast(void *const, int const, MPI_Datatype const, int const, MPI_Comm const);
+void corrt_statistics_print();
 
 
 {{fn fn_name MPI_Init}}
@@ -9,6 +10,9 @@ int corrected_broadcast(void *const, int const, MPI_Datatype const, int const, M
 
 {{fn fn_name MPI_Finalize}}
      // dying_finalize();
+     #ifdef CORRT_DO_STATISTICS
+       corrt_statistics_print();
+     #endif
      {{callfn}}
 {{endfn}}
 
