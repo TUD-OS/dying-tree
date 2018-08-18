@@ -76,6 +76,7 @@ FAULTS="72"
 
 # COMBINATIONS="$COMBINATIONS "$(eval echo "$CORRT_DISS_TYPE+$TREE_LAME_KS+$TYPES+$NNODES+$CORRT_DISTS+$FAULTS+$CORRT_GOSSIP_SEEDS+$CORRT_GOSSIP_ROUNDSS")
 
+COMBINATIONS=""
 # Baseline without shared memory
 CORRT_DISS_TYPE=tree_binomial
 TREE_LAME_KS=1
@@ -97,6 +98,18 @@ COMBINATIONS="$COMBINATIONS "$(eval echo "$CORRT_DISS_TYPE+$TREE_LAME_KS+$TYPES+
 # Our broadcast with optimal rank ordering
 CORRT_DISS_TYPE=tree_binomial
 TYPES=Mapping
+CORRT_DISTS="0"
+FAULTS="0"
+
+COMBINATIONS="$COMBINATIONS "$(eval echo "$CORRT_DISS_TYPE+$TREE_LAME_KS+$TYPES+$NNODES+$CORRT_DISTS+$FAULTS+$CORRT_GOSSIP_SEEDS+$CORRT_GOSSIP_ROUNDSS")
+
+## XXX
+## XXXX: REMOVE
+## XXX
+
+# Our broadcast with non-optimal rank ordering this repeats the first measurement
+CORRT_DISS_TYPE=tree_binomial
+TYPES=Corrected
 CORRT_DISTS="0"
 FAULTS="0"
 
