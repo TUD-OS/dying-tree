@@ -179,6 +179,8 @@ static bool *buff_fut = NULL;
  */
 static size_t num_child_diss;
 
+// If we perform Gossip, keep the number of rounds to do
+static int gossip_rounds = 0xBEEFBABE;
 
 
 
@@ -211,14 +213,17 @@ setup_diss_graph(int const rank, int const comm_size)
            num_parent == 0xBEEFBABE &&
            parents  == NULL &&
            children == NULL && "Graph already initialised");
+    assert(gossip_rounds == 0xBEEFBABE && "Gossip rounds already initialised");
 
     char const * const graph_type = read_env_or_fail("CORRT_DISS_TYPE");
 
-    // generic for all trees -> single parent
+    // generic for all trees -> single parent, no Gossip
     if (0 == strncmp(graph_type, "tree_", 5)) {
         num_parent = 1;
         parents    = malloc( sizeof(size_t) );
         if (!parents) { return CORRT_ERR_NO_MEM; }
+
+        gossip_rounds = -1;
     }
 
     if (0 == strncmp(graph_type, "tree_binomial", 13)) {
@@ -228,7 +233,7 @@ setup_diss_graph(int const rank, int const comm_size)
         return setup_tree_lame(rank, comm_size, &num_child, parents, &children);
     }
     if (0 == strncmp(graph_type, "gossip", 6)) {
-        return setup_gossip(rank, comm_size, &num_child, &num_parent, &parents, &children);
+        return setup_gossip(rank, comm_size, &gossip_rounds, &num_child, &num_parent, &parents, &children);
     }
 
     fprintf(stderr, "Unknown dissemination: '%s'\n"
@@ -749,13 +754,6 @@ corrected_broadcast(void *const buff,
 {
     if (0 == count) { return MPI_SUCCESS; } // that was simple :-)
 
-
-    // If we perform Gossip, keep the number of rounds to do
-    int const gossip_rounds = ( 0 == strncmp(read_env_or_fail("CORRT_DISS_TYPE"), "gossip", 6) ?
-                                read_env_int("CORRT_GOSSIP_ROUNDS") : -1 );
-    assert(gossip_rounds <= 127 && "Too many Gossip rounds");
-
-
     /* Reject unexpected parameters ... it's only a prototype after all
      *
      * Also note that we're "stealing" the first 'char' in the user data to
@@ -819,6 +817,7 @@ corrected_broadcast(void *const buff,
     assert((!num_child  || children) && "Child list not properly allocated.");
     assert((!num_parent || parents)  && "Parent list not properly allocated.");
     assert(corr_dist >= 0 && count_max >= 1 && "Params not initialised!?");
+    assert(gossip_rounds <= 127 && "Too many Gossip rounds");
 
 
     if (1 == size) { return MPI_SUCCESS; } // that was simple :-)
