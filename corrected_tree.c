@@ -10,6 +10,7 @@
 #include <mpi.h>
 #include "util.h"
 #include "corrected_binomial-tree.h"
+#include "corrected_binomial-tree_io.h"
 #include "corrected_lame-tree.h"
 #include "corrected_gossip.h"
 
@@ -270,6 +271,9 @@ setup_diss_graph(int const rank, int const comm_size)
 
     if (0 == strncmp(graph_type, "tree_binomial", 13)) {
         return setup_tree_binomial(rank, comm_size, &num_child, parents, &children);
+    }
+    if (0 == strncmp(graph_type, "tree_binomial_in_order", 22)) {
+        return setup_tree_binomial_in_order(rank, comm_size, &num_child, parents, &children);
     }
     if (0 == strncmp(graph_type, "tree_lame", 9)) {
         return setup_tree_lame(rank, comm_size, &num_child, parents, &children);
