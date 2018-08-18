@@ -171,6 +171,7 @@ do
 		;;
 	    'Native')
 		# Do nothing
+		EXPORT="$EXPORT,MPICH_SHARED_MEM_COLL_OPT=0"
 		;;
 	esac
 
