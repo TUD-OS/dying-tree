@@ -8,6 +8,8 @@
 #SBATCH --cpus-per-task=1
 #SBATCH --ntasks-per-core=2
 #SBATCH --exclusive
+#SBATCH --output=slurm-%j.out
+#SBATCH --error=slurm-%j.err
 
 module load daint-mc
 
