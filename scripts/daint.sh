@@ -149,6 +149,8 @@ done
 cat $0 > $OUTDIR/script.sh
 env > $OUTDIR/script.env
 
+cp $BASE/mapping/MPICH_RANK_ORDER.$NNODES ./MPICH_RANK_ORDER
+
 for i in $(seq 1 $REPETITION)
 do
     for EXPERIMENT in $COMBINATIONS
@@ -162,7 +164,6 @@ do
 	# DYING_LIST=($(seq 1 $FAULT))
 	DYING_LIST=$(IFS=';'; echo "${DYING_LIST[*]}")
 
-	rm MPICH_RANK_ORDER
 	export DYING_LIST
 	export CORRT_DIST
 	export CORRT_COUNT_MAX
@@ -177,7 +178,6 @@ do
 		;;
 	    'Mapping')
 		EXPORT="$EXPORT,LD_PRELOAD=$DYING_LIB,MPICH_RANK_REORDER_METHOD=3,MPICH_SHARED_MEM_COLL_OPT=0"
-		cp $BASE/mapping/MPICH_RANK_ORDER.$NNODES ./MPICH_RANK_ORDER
 		;;
 	    'Best')
 		# Do nothing
