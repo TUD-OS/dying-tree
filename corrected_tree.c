@@ -206,8 +206,8 @@ static void statistics_count_skipped(int a, bool b) {}
 void corrt_statistics_print() {}
 #else
 static size_t future[2] = {0,0}; // [0] = diss, [1] = corr
-static size_t skipped[2][3] = {9423,0,0};// [0][*] = regular, [1][*] = future
-                                         // [*][0] = min, [*][1] = max, [*][2] = sum (for avg)
+static size_t skipped[2][3] = {{9423,0,0},  // [0][*] = regular, [1][*] = future
+                               {9423,0,0}}; // [*][0] = min, [*][1] = max, [*][2] = sum (for avg)
 
 static void statistics_count_future(bool is_corr) {
     ++future[is_corr];
@@ -215,9 +215,9 @@ static void statistics_count_future(bool is_corr) {
 
 static void statistics_count_skipped(int dist_saved, bool is_future) {
     assert(dist_saved > 0 && "Nothing gained. Don't bother me.");
-    if (dist_saved < skipped[0][is_future]) { skipped[0][is_future] = dist_saved; }
-    if (dist_saved > skipped[1][is_future]) { skipped[1][is_future] = dist_saved; }
-    skipped[2][is_future] += dist_saved;
+    if (dist_saved < skipped[is_future][0]) { skipped[is_future][0] = dist_saved; }
+    if (dist_saved > skipped[is_future][1]) { skipped[is_future][1] = dist_saved; }
+    skipped[is_future][2] += dist_saved;
 }
 
 void corrt_statistics_print() {
