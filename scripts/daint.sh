@@ -1,6 +1,6 @@
 #!/bin/bash -l
 #SBATCH --time 01:00:00
-#SBATCH --nodes 128
+#SBATCH --nodes 512
 #SBATCH --constraint=mc
 #SBATCH --mail-type=ALL
 #SBATCH --mail-user=mplaneta@os.inf.tu-dresden.de

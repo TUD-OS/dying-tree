@@ -4,7 +4,7 @@ library(readr)
 library(ggplot2)
 library(ggthemes)
 library(tikzDevice)
-
+library(stringr)
 
 
 theme_Publication <- function(base_size=14, base_family="CM Roman") {
@@ -155,7 +155,15 @@ df.all <- df.gossip %>%
     filter(TreeType == 'gossip') %>%
     bind_rows(df)
 
-pdf('pizdaint_no_faults.pdf')
+annotation.df <- data.frame(x=0.55, xend=0.55, y=6.1, yend=1, color='black', label="Minimum", vjust='bottom', hjust='left', stringsAsFactors=FALSE)
+annotation.df[nrow(annotation.df) + 1, ] = list(0.9, 0.67, 4, 2.7, 'red', 'Binomial', 'bottom', 'center')
+annotation.df[nrow(annotation.df) + 1, ] = list(1.8, 1.85, 6.2, 4.52, 'blue', '4-ary', 'bottom', 'center')
+annotation.df[nrow(annotation.df) + 1, ] = list(2.8, 3, 7, 5.56, 'green', "Lam\\'e", 'bottom', 'center')
+annotation.df[nrow(annotation.df) + 1, ] = list(3.7, 4.15, 7, 6, 'violet', 'Optimal', 'bottom', 'center')
+annotation.df[nrow(annotation.df) + 1, ] = list(4.3, 4.3, 9, 7.9, 'orange', 'Gossip', 'bottom', 'center')
+
+tikz('../../../../tree-broadcast/plots/daint-no-faults.tex', width=3.2, height=2.0)
+
 df.all %>%
     filter(Size == 8,
            CorrType != 'Mapping') %>%
@@ -165,7 +173,7 @@ df.all %>%
     geom_line(aes(col=Type)) +
     geom_point(aes(shape=Type, col=Type)) +
     theme_Publication() %+replace%
-    theme(legend.position = 'top',
+    theme(legend.position = 'none',
           legend.box = 'vertical',
           legend.spacing.y = unit(1, unit='mm'),
           legend.margin = margin(0.0, unit='mm'),
@@ -174,7 +182,19 @@ df.all %>%
           legend.background = element_blank()) +
     scale_x_log10(breaks = breaks, labels = labels) +
     ylab('Latency, $\\mu{}s$') +
-    xlab("Processes")
+    xlab("Processes") +
+    ylim(c(0,120)) +
+    annotate("segment",
+             x=annotation.df$x, xend=annotation.df$xend,
+             y=annotation.df$y, yend=annotation.df$yend,
+             color=annotation.df$color,
+             arrow=arrow(length = unit(2, "points"), type='closed'), lineend = 'round') +
+    annotate("text",
+             x=annotation.df$x, y=annotation.df$y+0.05,
+             label=annotation.df$label,
+             vjust=annotation.df$vjust, hjust=annotation.df$hjust,
+             color=annotation.df$color, size=2.5, alpha=1)
+
 dev.off()
 
 df.trees <- read.dirs(c('190818_13-33-52.27729', '190818_13-37-15.8603', '190818_13-37-15.31546'))
@@ -183,7 +203,7 @@ df.trees <- read.dirs(c('190818_14-54-39.24986', '190818_14-54-59.22228', '19081
 
 df.trees <- read.dirs(c('190818_15-19-20.30623', '190818_15-19-20.23258', '190818_15-19-20.2114'))
 
-df.trees <- read.dirs(c('190818_15-40-23.17345', '190818_15-41-24.21472', '190818_15-41-24.287'))
+df.trees <- read.dirs(c('190818_15-40-23.17345', '190818_15-41-24.21472', '190818_20-07-04.30393', '190818_19-37-36.29645', '190818_19-52-19.21339', '190818_20-09-26.20031'))
 
 df.all <- df.gossip %>%
     group_by(Size, TreeType, Nnodes) %>%
@@ -193,35 +213,29 @@ df.all <- df.gossip %>%
     bind_rows(df.trees)
 
 
-tikz('../../../../tree-broadcast/daint-latency.tex', width=3.2, height=2.0)
-
+tikz('../../../../tree-broadcast/plots/daint-correction.tex', width=3.2, height=2.0)
 cur.size = 256
 df.trees %>%
-    mutate(group = as.factor(paste(TreeType, CorrType, Corr))) %>%
-    filter(Size %in% c(cur.size), Corr != 4,
-           FaultCount == 0) %>%
+    mutate(group = as.factor(paste(TreeType, CorrType, Corr, FaultCount))) %>%
+    filter(Size %in% c(cur.size),
+           CorrType != 'Native') %>%
     mutate(CorrType = ifelse(CorrType == 'Native', 'Cray MPI', 'Corrected')) %>%
     ggplot(aes(as.factor(Nproc), AvgTime.50, group=group)) +
     geom_ribbon(aes(ymin=AvgTime.25, ymax=AvgTime.75), alpha = 0.3)+ 
     geom_line(aes(col=group, lty=as.factor(Corr))) +
     geom_point(aes(col=group, shape=group)) +
     theme_Publication() %+replace%
-    theme(legend.position = 'top',
+    theme(legend.position = 'none',
           legend.box = 'vertical',
           legend.spacing.y = unit(1, unit='mm'),
           legend.margin = margin(0.0, unit='mm'),
           legend.key.width = unit(5, unit='mm'),
           legend.box.margin = margin(c(0, 0, 0, 0), unit='mm'),
           legend.background = element_blank()) +
-    scale_x_discrete(breaks = breaks, labels = labels) +
+    scale_x_log10(breaks = breaks, labels = labels) +
     ylab('Latency, $\\mu{}s$') +
     xlab("Processes") +
-    ggtitle(paste("Size =", cur.size)) +
-    ylim(c(0, 70))
-
-+
-    col + lty + shape +
-
+    ylim(c(0,100))
 dev.off()
 
 simpleCap <- function(x) {
