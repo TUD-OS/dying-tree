@@ -72,11 +72,32 @@ dirs <- c('08-11-27_030518.1892', '00-27-47_030518.31439', '08-06-15_030518.2861
 
 dirs <- c('18-04-20_160818.17474', '20-03-10_160818.1464')
 
-df <- FALSE
-for (dir in dirs) {
-    df.cur <- read.csv(paste0('../logs/daint/', dir, '/table.csv'))  %>%
-        select(-FaultList) %>%
-        group_by(TreeType, LameK, CorrType, Corr, Nnodes, Nproc, FaultCount, Size) %>%
+dirs <- c('14-18-09_170818.22896', '14-18-54_170818.11243', '14-18-54_170818.30747', '14-18-54_170818.413', '14-19-08_170818.16306')
+
+dirs <- c('22-40-56_170818.7462', '170818_22-49-29.18183', '170818_22-49-55.5705')
+
+dirs <- c('180818_00-10-18.28049', '170818_23-47-31.6091', '170818_23-29-24.26143', '170818_23-33-51.28153', '170818_23-33-52.32189', '170818_23-38-58.8863')
+
+dirs <- c('180818_11-41-38.6027')
+
+dirs <- c('180818_11-50-10.25330', '180818_11-50-10.28131', '180818_11-50-10.30858', '180818_11-50-10.9209')
+
+
+read.dirs <- function(dirs) {
+    df <- NULL
+    for (dir in dirs) {
+        df.cur <- read.csv(paste0('../logs/daint/', dir, '/table.csv'), stringsAsFactors=FALSE) 
+        if (is.null(df)) {
+            df <- df.cur
+        } else {
+            df <- bind_rows(df, df.cur)
+        }
+    }
+    df <- df %>%
+        select(-FaultList, -Iterations)
+
+    df <- df %>%
+        group_by(TreeType, LameK, CorrType, Corr, Nnodes, Nproc, FaultCount, Size, GossipRounds) %>%
         summarize(AvgTime.50 = median(AvgTime),
                   AvgTime.25 = quantile(AvgTime, .25),
                   AvgTime.75 = quantile(AvgTime, .75),
@@ -87,12 +108,12 @@ for (dir in dirs) {
                   MaxTime.75 = quantile(MaxTime, .75)) %>%
         ungroup() %>%
         mutate(CorrFull = sprintf("%s (%s)", CorrType, Corr))
-    if (df == FALSE) {
-        df <- df.cur
-    } else {
-        df <- bind_rows(df, df.cur)
-    }
+    return (df)
 }
+
+## Baseline comparison
+df <- read.dirs(c('180818_14-53-53.19551', '180818_15-12-16.6507', '180818_11-50-10.30858', '180818_11-50-10.28131_170818_23-47-31.6091', '180818_00-10-18.28049_180818_11-29-41.20840', '180818_17-04-13.32120'))
+
 
 colors <- c('#e41a1c', '#377eb8','#4daf4a','#984ea3', "#ff7f00", "black")
 ## fill <- scale_fill_manual(name="Broadcast", values=colors)
@@ -101,14 +122,10 @@ shape <- scale_shape_manual(name="Broadcast", values=c(15, 16, 17, 14, 13))
 lty <- scale_linetype_manual(name="Correction", values=c(1, 2, 3, 4))
 breaks <- sort(unique(df$Nproc))
 labels <- breaks
-tikz('../../../../tree-broadcast/daint-latency.tex', width=3.2, height=2.0)
+tikz('../../../../tree-broadcast/plots/daint-baseline.tex', width=3.2, height=2.0)
 df %>%
-    filter(Size %in% c(8),
-           CorrFull %in% c('Native (0)', 'Corrected (0)', 'Corrected (2)', 'Corrected (4)'),
-           TreeType == 'tree_binomial',
-           FaultCount == 0) %>%
-    mutate(CorrType = ifelse(CorrType == 'Native', 'Cray MPI', 'Corrected')) %>%
-    ggplot(aes(as.factor(Nproc), AvgTime.50, group=paste0(CorrType, Corr), shape=factor(CorrType), lty=factor(Corr))) +
+    filter(Size == 256, TreeType=='tree_binomial', Corr==0, CorrType != 'Mapping') %>%
+    ggplot(aes(as.factor(Nproc), AvgTime.50, group=factor(CorrType), shape=factor(CorrType))) +
     geom_ribbon(aes(ymin=AvgTime.25, ymax=AvgTime.75), alpha = 0.3)+ 
     geom_line(aes(col=factor(CorrType))) +
     geom_point(aes(col=factor(CorrType))) +
@@ -124,7 +141,87 @@ df %>%
     ylab('Latency, $\\mu{}s$') +
     xlab("Processes") +
     col + lty + shape +
-    ylim(c(0,65))
+    ylim(c(0,120))
+dev.off()
+
+
+## Gossip
+df.gossip <- read.dirs(c('180818_23-01-27.12313', '180818_23-09-20.14878', '180818_22-02-24.12371', '180818_22-29-02.26699', '180818_22-53-01.10754', '180818_23-26-15.10011'))
+
+df.all <- df.gossip %>%
+    group_by(Size, TreeType, Nnodes) %>%
+    filter(AvgTime.50 == min(AvgTime.50)) %>%
+    ungroup() %>%
+    filter(TreeType == 'gossip') %>%
+    bind_rows(df)
+
+pdf('pizdaint_no_faults.pdf')
+df.all %>%
+    filter(Size == 8,
+           CorrType != 'Mapping') %>%
+    mutate(Type = as.factor(paste0(TreeType, CorrType))) %>%
+    ggplot(aes(Nproc, AvgTime.50, group=Type)) +
+    geom_ribbon(aes(ymin=AvgTime.25, ymax=AvgTime.75), alpha = 0.3)+ 
+    geom_line(aes(col=Type)) +
+    geom_point(aes(shape=Type, col=Type)) +
+    theme_Publication() %+replace%
+    theme(legend.position = 'top',
+          legend.box = 'vertical',
+          legend.spacing.y = unit(1, unit='mm'),
+          legend.margin = margin(0.0, unit='mm'),
+          legend.key.width = unit(5, unit='mm'),
+          legend.box.margin = margin(c(0, 0, 0, 0), unit='mm'),
+          legend.background = element_blank()) +
+    scale_x_log10(breaks = breaks, labels = labels) +
+    ylab('Latency, $\\mu{}s$') +
+    xlab("Processes")
+dev.off()
+
+df.trees <- read.dirs(c('190818_13-33-52.27729', '190818_13-37-15.8603', '190818_13-37-15.31546'))
+
+df.trees <- read.dirs(c('190818_14-54-39.24986', '190818_14-54-59.22228', '190818_14-55-13.8801'))
+
+df.trees <- read.dirs(c('190818_15-19-20.30623', '190818_15-19-20.23258', '190818_15-19-20.2114'))
+
+df.trees <- read.dirs(c('190818_15-40-23.17345', '190818_15-41-24.21472', '190818_15-41-24.287'))
+
+df.all <- df.gossip %>%
+    group_by(Size, TreeType, Nnodes) %>%
+    filter(AvgTime.50 == min(AvgTime.50)) %>%
+    ungroup() %>%
+    filter(TreeType == 'gossip') %>%
+    bind_rows(df.trees)
+
+
+tikz('../../../../tree-broadcast/daint-latency.tex', width=3.2, height=2.0)
+
+cur.size = 256
+df.trees %>%
+    mutate(group = as.factor(paste(TreeType, CorrType, Corr))) %>%
+    filter(Size %in% c(cur.size), Corr != 4,
+           FaultCount == 0) %>%
+    mutate(CorrType = ifelse(CorrType == 'Native', 'Cray MPI', 'Corrected')) %>%
+    ggplot(aes(as.factor(Nproc), AvgTime.50, group=group)) +
+    geom_ribbon(aes(ymin=AvgTime.25, ymax=AvgTime.75), alpha = 0.3)+ 
+    geom_line(aes(col=group, lty=as.factor(Corr))) +
+    geom_point(aes(col=group, shape=group)) +
+    theme_Publication() %+replace%
+    theme(legend.position = 'top',
+          legend.box = 'vertical',
+          legend.spacing.y = unit(1, unit='mm'),
+          legend.margin = margin(0.0, unit='mm'),
+          legend.key.width = unit(5, unit='mm'),
+          legend.box.margin = margin(c(0, 0, 0, 0), unit='mm'),
+          legend.background = element_blank()) +
+    scale_x_discrete(breaks = breaks, labels = labels) +
+    ylab('Latency, $\\mu{}s$') +
+    xlab("Processes") +
+    ggtitle(paste("Size =", cur.size)) +
+    ylim(c(0, 70))
+
++
+    col + lty + shape +
+
 dev.off()
 
 simpleCap <- function(x) {

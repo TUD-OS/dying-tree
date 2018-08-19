@@ -2,10 +2,10 @@
 #SBATCH --time 00:10:00
 #SBATCH --nodes 18
 #SBATCH --mail-type=ALL
-#SBATCH --mail-user=maksym.planeta@tu-dresden.de
+#SBATCH --mail-user=mplaneta@os.inf.tu-dresden.de
 #SBATCH --partition=haswell64
 #SBATCH --mem-per-cpu 2000
-#SBATCH --ntasks-per-node 24
+#SBATCH --ntasks-per-node 18
 #SBATCH --exclusive
 
 export MODULEPATH=~s9951545/.modules:$MODULEPATH
@@ -19,12 +19,14 @@ DYING_LIB=$BASEDIR/dying/build/libdying.so
 WORKDIR=$BASEDIR/osu-micro-benchmarks-5.4.1/mpi/collective
 
 ITERATIONS=1000
-MSG_SIZE="256"
-CORRT_COUNT_MAX="$MSG_SIZE"
+MSG_SIZE_MIN="8"
+MSG_SIZE_MAX="256"
+MSG_SIZE="$MSG_SIZE_MIN:$MSG_SIZE_MAX"
+CORRT_COUNT_MAX=$MSG_SIZE_MAX
 # Extract from TASKS_PER_NODE from SLURM_TASKS_PER_NODE (e.g. "72(x4)" -> "72")
 TASKS_PER_NODE=$(echo $SLURM_TASKS_PER_NODE | sed 's/\(.*\)(.*).*/\1/g;s/[^0-9]//g')
 REPETITION="2"
-CORRT_GOSSIP_SEEDS=23
+export CORRT_GOSSIP_SEEDS=$RANDOM
 CORRT_GOSSIP_ROUNDSS=1
 NNODES="{18,36,72}"
 NNODES="18"
