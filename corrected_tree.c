@@ -221,14 +221,38 @@ static void statistics_count_skipped(int dist_saved, bool is_future) {
 }
 
 void corrt_statistics_print() {
-    if (rank != size/2) { return; } // let only one rank print
+    assert(MPI_SUCCESS == 0);
+    if (rank) {
+        if (PMPI_Reduce(&(skipped[0][0]), NULL, 1, MPI_UNSIGNED_LONG_LONG, MPI_MIN, 0, MPI_COMM_WORLD)
+          + PMPI_Reduce(&(skipped[1][0]), NULL, 1, MPI_UNSIGNED_LONG_LONG, MPI_MIN, 0, MPI_COMM_WORLD)
+          + PMPI_Reduce(&(skipped[0][1]), NULL, 1, MPI_UNSIGNED_LONG_LONG, MPI_MAX, 0, MPI_COMM_WORLD)
+          + PMPI_Reduce(&(skipped[1][1]), NULL, 1, MPI_UNSIGNED_LONG_LONG, MPI_MAX, 0, MPI_COMM_WORLD)
+          + PMPI_Reduce(&(skipped[0][2]), NULL, 1, MPI_UNSIGNED_LONG_LONG, MPI_SUM, 0, MPI_COMM_WORLD)
+          + PMPI_Reduce(&(skipped[1][2]), NULL, 1, MPI_UNSIGNED_LONG_LONG, MPI_SUM, 0, MPI_COMM_WORLD)
+          != MPI_SUCCESS) {
+            fprintf(stderr, "Reduce failed");
+        }
+        return; // let only root print
+    }
+
+    if (PMPI_Reduce(MPI_IN_PLACE, &(skipped[0][0]), 1, MPI_UNSIGNED_LONG_LONG, MPI_MIN, 0, MPI_COMM_WORLD)
+      + PMPI_Reduce(MPI_IN_PLACE, &(skipped[1][0]), 1, MPI_UNSIGNED_LONG_LONG, MPI_MIN, 0, MPI_COMM_WORLD)
+      + PMPI_Reduce(MPI_IN_PLACE, &(skipped[0][1]), 1, MPI_UNSIGNED_LONG_LONG, MPI_MAX, 0, MPI_COMM_WORLD)
+      + PMPI_Reduce(MPI_IN_PLACE, &(skipped[1][1]), 1, MPI_UNSIGNED_LONG_LONG, MPI_MAX, 0, MPI_COMM_WORLD)
+      + PMPI_Reduce(MPI_IN_PLACE, &(skipped[0][2]), 1, MPI_UNSIGNED_LONG_LONG, MPI_SUM, 0, MPI_COMM_WORLD)
+      + PMPI_Reduce(MPI_IN_PLACE, &(skipped[1][2]), 1, MPI_UNSIGNED_LONG_LONG, MPI_SUM, 0, MPI_COMM_WORLD)
+      != MPI_SUCCESS) {
+        fprintf(stderr, "Reduce failed");
+        return;
+    }
+
     fprintf(stderr,
             "Total number of future messages: %zd dissemination, %zd correction\n"
             "Correction messages saved (regular): %zd (min), %zd (max), %f (avg)\n"
             "Correction messages saved (future):  %zd (min), %zd (max), %f (avg)\n\n",
             future[0], future[1],
-            (skipped[0][0] == 9423 ? 0 : skipped[0][0]), skipped[0][1], skipped[0][2]/(double)epoch_global,
-            (skipped[1][0] == 9423 ? 0 : skipped[1][0]), skipped[1][1], skipped[1][2]/(double)epoch_global);
+            (skipped[0][0] == 9423 ? 0 : skipped[0][0]), skipped[0][1], (skipped[0][2]/(double)epoch_global)/size,
+            (skipped[1][0] == 9423 ? 0 : skipped[1][0]), skipped[1][1], (skipped[1][2]/(double)epoch_global)/size);
 }
 #endif
 
