@@ -17,7 +17,7 @@ setup_tree_binomial_in_order(int const rank, int const comm_size,
 
     while (mask < comm_size) {
         if (rank & mask) {
-            assert(*parent == 0xBEEFBABE && "Two parents!?");
+            assert(*parent == 0xBEEFBABEul && "Two parents!?");
             *parent = rank - mask;
             assert(*parent >= 0 && "Broken tree");
             break;
@@ -28,7 +28,7 @@ setup_tree_binomial_in_order(int const rank, int const comm_size,
 
     if (!rank) {
         assert(mask >= comm_size);
-        assert(parent == 0xBEEFBABE && "Root got a parent!?");
+        assert(*parent == 0xBEEFBABE && "Root got a parent!?");
         *parent = comm_size + 1; // "obviously faulty" value for root node
     }
 

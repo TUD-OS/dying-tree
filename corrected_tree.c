@@ -5,9 +5,7 @@
 #include <string.h>
 #include <unistd.h>
 
-#define IMPL_INSIDE_OMPI 0
 
-#include <mpi.h>
 #include "util.h"
 #include "corrected_binomial-tree.h"
 #include "corrected_binomial-tree_io.h"
@@ -16,10 +14,10 @@
 
 
 
-
-#if IMPL_INSIDE_OMPI
+#if CORRT_IMPL_INSIDE_OMPI
     // types
     #define CORRT_MPI_STATUS ompi_status_public_t
+    #define CORRT_OMPI_MODULE_TYPE mca_coll_base_module_t
 
     // functions
     #define CORRT_ALLOC_REQS(NUM) \
@@ -33,9 +31,9 @@
         *(RANK) = ompi_comm_rank(COMM)
 
     #define CORRT_MPI_ISEND(A,B,C,D,E,F,G) \
-        MCA_PML_CALL(isend(A,B,C,D,E,F,G))
+        MCA_PML_CALL(isend(A,B,C,D,E,MCA_PML_BASE_SEND_STANDARD,F,G))
     #define CORRT_MPI_SEND(A,B,C,D,E,F) \
-        MCA_PML_CALL(send(A,B,C,D,E,F))
+        MCA_PML_CALL(send(A,B,C,D,E,MCA_PML_BASE_SEND_STANDARD,F))
     #define CORRT_MPI_RECV_INIT(A,B,C,D,E,F,G) \
         MCA_PML_CALL(irecv_init(A,B,C,D,E,F,G))
     #define CORRT_MPI_START(A) \
@@ -48,17 +46,25 @@
     #define CORRT_MPI_WAITALL(A,B,C,D,E,F,G,H) \
         ompi_request_wait_all(A,B,C,D,E,F,G,H)
 
+    #include "corrected_binomial-tree.c"
+    #include "corrected_binomial-tree_io.c"
+    #include "corrected_lame-tree.c"
+    #include "corrected_gossip.c"
+    #include "util.c"
+
 #else
+    #include <mpi.h>
+
     // (additional) constants
     static int const MCA_COLL_BASE_TAG_BCAST = 2342; // message tag to use for our bcast
 
     // types
     #define CORRT_MPI_STATUS MPI_Status
+    #define CORRT_OMPI_MODULE_TYPE void
 
     // functions
     #define CORRT_ALLOC_REQS(NUM) \
         malloc( (NUM) * sizeof(MPI_Request) )
-
 
     #define CORRT_MPI_ABORT(A,B) \
         PMPI_Abort(A,B)
@@ -186,7 +192,7 @@ static bool *buff_fut = NULL;
 static size_t num_child_diss;
 
 // If we perform Gossip, keep the number of rounds to do
-static int gossip_rounds = 0xBEEFBABE;
+static int gossip_rounds = 0xDEADABE;
 
 
 
@@ -200,6 +206,10 @@ static int size, rank; // We only support COMM_WORLD, so these will be fixed
 /******************************************************************************
  * Statistics                                                                 *
  ******************************************************************************/
+static void statistics_count_future(bool b);
+static void statistics_count_skipped(int a, bool b);
+void corrt_statistics_print(void);
+
 #ifndef CORRT_DO_STATISTICS
 static void statistics_count_future(bool b) {}
 static void statistics_count_skipped(int a, bool b) {}
@@ -222,6 +232,7 @@ static void statistics_count_skipped(int dist_saved, bool is_future) {
 
 void corrt_statistics_print() {
     assert(MPI_SUCCESS == 0);
+    // Evil and hacky ... but should do the jobs
     if (rank) {
         if (PMPI_Reduce(&(skipped[0][0]), NULL, 1, MPI_UNSIGNED_LONG_LONG, MPI_MIN, 0, MPI_COMM_WORLD)
           + PMPI_Reduce(&(skipped[1][0]), NULL, 1, MPI_UNSIGNED_LONG_LONG, MPI_MIN, 0, MPI_COMM_WORLD)
@@ -280,7 +291,7 @@ setup_diss_graph(int const rank, int const comm_size)
            num_parent == 0xBEEFBABE &&
            parents  == NULL &&
            children == NULL && "Graph already initialised");
-    assert(gossip_rounds == 0xBEEFBABE && "Gossip rounds already initialised");
+	 assert(gossip_rounds == 0xDEADABE && "Gossip rounds already initialised");
 
     char const * const graph_type = read_env_or_fail("CORRT_DISS_TYPE");
 
@@ -353,7 +364,7 @@ is_parent(size_t const rank)
  * return MPI status code
  */
 static inline int
-allocate_buffers()
+allocate_buffers(CORRT_OMPI_MODULE_TYPE *module)
 {
     assert(!reqs && !epoch_neigh && !buff_fut && !buffers && !statuses && !indices && "Memory already allocated!?");
 
@@ -383,7 +394,7 @@ allocate_buffers()
     reqs = CORRT_ALLOC_REQS(num_parent + num_child + 2 * corr_dist);
     if (!reqs) { return CORRT_ERR_NO_MEM; }
 
-    for (int cc=0; cc < num_parent + num_child + 2 * corr_dist; ++cc) {
+    for (size_t cc=0; cc < num_parent + num_child + 2 * corr_dist; ++cc) {
         reqs[cc] = MPI_REQUEST_NULL;
     }
 
@@ -567,8 +578,10 @@ receive_initial_message(int     const count,        // IN
 
             assert(status.MPI_SOURCE >= 0 && "Invalid sender rank");
             assert( (idx < req_corr_rcv || (rank - status.MPI_SOURCE > 0)) && "Correction message from our right");
-            assert( ((idx < req_corr_rcv && (unsigned)status.MPI_SOURCE == parents[idx]) || // rcv from parent
-                     (idx - req_corr_rcv + 1) == (rank - status.MPI_SOURCE) ) && "Unexpected index for sender");
+            assert( (
+                     (idx < req_corr_rcv && (unsigned)status.MPI_SOURCE == parents[idx]) || // rcv from parent
+                     (rank > status.MPI_SOURCE && (idx - req_corr_rcv + 1) == (size_t)(rank - status.MPI_SOURCE))
+                    ) && "Unexpected index for sender");
 
             /* Note that 'idx' "incidentally" corresponds to the sender rank's
              * entries not only in 'reqs' but also 'buffers' and 'epoch_neigh'.
@@ -601,7 +614,7 @@ receive_initial_message(int     const count,        // IN
                                                                 // req_corr_rcv is 1 from us,
                                                                 // req_corr_rcv + 1 is 2 from us, ...
 
-                    assert(dist == (rank - status.MPI_SOURCE) && "Unexpected index for sender");
+                    assert(rank < status.MPI_SOURCE && dist == (size_t)(rank - status.MPI_SOURCE) && "Unexpected index for sender");
 
                     if (dist < *corr_neigh) {
                         statistics_count_skipped(*corr_neigh - dist, false);
@@ -735,7 +748,9 @@ do_correction(int          const count,        // IN
                     assert( (MPI_SUCCESS == err || MPI_SUCCESS == status.MPI_ERROR) && "Failed recv");
 //                     assert(rank > status.MPI_SOURCE && "Correction from right neighbour (or weird/small parent rank)");
 //                     -> not with Gossip
-                    assert( (idx < req_corr_rcv || dist == rank - status.MPI_SOURCE) && "Unexpected index for sender");
+                    assert( (idx < req_corr_rcv ||
+                             (rank > status.MPI_SOURCE && dist == (size_t)(rank - status.MPI_SOURCE))
+                            ) && "Unexpected index for sender");
 
                     /* Note that 'idx' "incidentally" corresponds to the sender rank's
                      * entries not only in 'reqs' but also 'buffers' and 'epoch_neigh'.
@@ -820,11 +835,12 @@ do_correction(int          const count,        // IN
  * Core implementation of corrected broadcast
  */
 int
-corrected_broadcast(void *const buff,
-                    int const count,
-                    MPI_Datatype const datatype,
-                    int const root,
-                    MPI_Comm const comm)
+ompi_coll_base_bcast_intra_corrected(void *const buff,
+                                     int const count,
+                                     MPI_Datatype const datatype,
+                                     int const root,
+                                     MPI_Comm const comm,
+                                     CORRT_OMPI_MODULE_TYPE *module)
 {
     if (0 == count) { return MPI_SUCCESS; } // that was simple :-)
 
@@ -836,7 +852,8 @@ corrected_broadcast(void *const buff,
      */
     if (root != 0 ||
         datatype != MPI_CHAR ||
-        count < (sizeof(epoch_t) + (gossip_rounds >= 0 ? sizeof(char) : 0)) ||
+        count < 0 ||
+        (unsigned)count < (sizeof(epoch_t) + (gossip_rounds >= 0 ? sizeof(char) : 0)) ||
         comm != MPI_COMM_WORLD) {
 
         fprintf(stderr, "Unsupported parameters\n");
@@ -905,7 +922,7 @@ corrected_broadcast(void *const buff,
      * still present from the previous invocation.
      */
     if (epoch_global == 0) {
-        err = allocate_buffers();
+        err = allocate_buffers(module);
         if (MPI_SUCCESS != err) { return err; }
 
         // Non-root ranks expect to receive ...
@@ -915,7 +932,7 @@ corrected_broadcast(void *const buff,
 
             // ... a diss message from each of their parents
             for (size_t par = 0; par < num_parent; ++par) {
-                assert(parents[par] >= 0 && parents[par] < size && "Broken parent entry");
+                assert(parents[par] >= 0 && parents[par] < (unsigned)size && "Broken parent entry");
                 err = CORRT_MPI_RECV_INIT(&buffers[(req_diss_rcv + par) * count_max],
                                      count_max,
                                      datatype,
@@ -965,7 +982,7 @@ corrected_broadcast(void *const buff,
     assert(reqs && epoch_neigh && buff_fut && buffers && statuses && indices && (!num_child || children) && (!num_parent || parents) && "Memory not properly allocated.");
     assert( (rank != root || (MPI_REQUEST_NULL == reqs[req_diss_rcv]) ) && "Root with active diss recv");
     assert( (rank == root || !num_parent || (MPI_REQUEST_NULL != reqs[req_diss_rcv]) ) && "Non-root, non-orphaned node w/o (at least one) active diss recv");
-    assert( (gossip_rounds < 0 || gossip_rounds == num_child) && "Inconsistent Gossip state");
+    assert( (gossip_rounds < 0 || (unsigned)gossip_rounds == num_child) && "Inconsistent Gossip state");
 
 
     // Reset children we send to; normal case for trees, max for Gossip

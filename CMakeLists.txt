@@ -14,7 +14,9 @@ SET_SOURCE_FILES_PROPERTIES(dying.c OBJECT_DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/d
 set(CMAKE_INCLUDE_CURRENT_DIR ON)
 
 string(APPEND CMAKE_SHARED_LINKER_FLAGS " -Wl,--no-undefined")
+#string(APPEND CMAKE_SHARED_LINKER_FLAGS_DEBUG " -fsanitize=address -fsanitize=undefined")
 string(APPEND CMAKE_C_FLAGS             " -fdiagnostics-color=always -fstrict-overflow -Wstrict-overflow")
+#string(APPEND CMAKE_C_FLAGS_DEBUG       " -fsanitize=address -fsanitize=undefined")
 
 add_wrapped_file(dying_wrap.h dying_wrap.w)
 add_library(dying SHARED

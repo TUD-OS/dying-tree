@@ -40,8 +40,8 @@ setup_gossip(int const rank, int const comm_size,
     //
     // Generate (pseudo-randomly) *all* children of *all* nodes until we
     // found all our children and parents
-    size_t cur_parent = 0;
-    for (size_t cur_rank = 0; cur_rank < comm_size; ++cur_rank) {
+    int cur_parent = 0;
+    for (int cur_rank = 0; cur_rank < comm_size; ++cur_rank) {
         for (size_t cur_child = 0; cur_child < rounds; ++cur_child) {
             int candidate;
 
@@ -58,14 +58,15 @@ setup_gossip(int const rank, int const comm_size,
 
             // our parents
             if (candidate == rank) {
-                assert(cur_parent < *num_parent && "Too many parents");
+                assert(cur_parent >= 0 && (unsigned)cur_parent < *num_parent && "Too many parents");
                 (*parents)[cur_parent++] = cur_rank;
             }
         }
     }
 
     // handle non-worst cases :-)
-    if (cur_parent < *num_parent) {
+    assert(cur_parent >= 0 && "Overflow!?");
+	 if ((unsigned)cur_parent < *num_parent) {
         *num_parent = cur_parent;
         *parents = realloc(*parents, sizeof(size_t) * *num_parent); // trim parent list (optional memory optimisation)
         assert( (*parents || !*num_parent) && "Out of memory while *shrinking* array");
