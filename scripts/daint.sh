@@ -1,6 +1,6 @@
 #!/bin/bash -l
 #SBATCH --time 01:00:00
-#SBATCH --nodes 512
+#SBATCH --nodes 64
 #SBATCH --constraint=mc
 #SBATCH --mail-type=ALL
 #SBATCH --mail-user=mplaneta@os.inf.tu-dresden.de
@@ -10,6 +10,7 @@
 #SBATCH --exclusive
 #SBATCH --output=slurm-%j.out
 #SBATCH --error=slurm-%j.err
+#SBATCH --switches=1@1:00:00
 
 module load daint-mc
 
