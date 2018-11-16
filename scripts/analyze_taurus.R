@@ -4,6 +4,7 @@ library(readr)
 library(ggplot2)
 library(ggthemes)
 library(tikzDevice)
+library(data.table)
 
 dirs <- c('18-00-13_300418.2674.taurus')
 
@@ -58,7 +59,7 @@ col <- scale_color_manual(name="Broadcast", values=colors)
 shape <- scale_shape_manual(name="Broadcast", values=c(15, 16, 17, 14, 13))
 lty <- scale_linetype_manual(name="Faults", values=c(1, 2, 3, 4))
                                                 
-df <- read.csv(paste0('../logs/taurus/', dir, '/table.csv')) %>%
+df <- read.csv(paste0('../../logs/taurus/', dir, '/table.csv')) %>%
     mutate(Nproc = Nnodes * 24) %>%
     mutate(Algorithm = ifelse(Algorithm == 6, 'Open~MPI',
                   ifelse(Algorithm == 7, 'Corrected', 'XXX')))
@@ -68,119 +69,62 @@ df.sum <- df %>%
               AvgTime.25 = quantile(AvgTime, .25),
               AvgTime.75 = quantile(AvgTime, .75))
 
-tikz('../../../../tree-broadcast/taurus.tex', width=3, height=2.0)
-breaks <- sort(unique(df.sum$Size))
+tikz('../../../../tree-broadcast/plots/taurus.tex', width=3, height=2.0)
+annotation.df <- rbindlist(
+    list(
+        list(x=600, xend=600, y=9, yend=12.2, color='#e41a1c', label="Ours ($d=0$)", vjust='top', hjust='right'),
+        list(505, 490, 8.35, 6.95, '#e41a1c', '', 'bottom', 'left'),
+        list(1000, 1400, 15.5, 14.85, '#4daf4a', 'Ours ($d=2$, faults)', 'center', 'right'),
+        list(1200, 1400, 6.5, 8.8, '#4daf4a', 'Ours ($d=2$, faults)', 'top', 'right'),
+        list(1400, 1700, 12, 14.8, '#984ea3', 'Ours ($d=4$, faults)', 'top', 'right'),
+        list(1400, 1700, 11.9, 9.7, '#984ea3', '', 'bottom', 'right'),
+        list(790, 700, 10.5, 11.8, '#377eb8', " OMPI", 'bottom', 'left'),
+        list(950, 1100, 10.5, 8.1, '#377eb8', "", 'top', 'right')
+    ),
+    use.name=TRUE, fill=FALSE, idcol=FALSE)
+breaks <- sort(unique(df.sum$Nproc))
 labels <- breaks
-df.sum %>% filter(Size %in% c(8, 256) & (Algorithm == 'Open~MPI' | Corr == 2)) %>%
-    ggplot(aes(as.factor(Nproc),
-               AvgTime.50, group=paste0(factor(Algorithm), factor(FaultCount)))) +
-    geom_line(aes(col=factor(Algorithm), lty=factor(FaultCount))) +
+df.sum %>% filter(Size %in% c(8, 256),
+                       Algorithm == 'Open~MPI'
+                       | FaultCount != 0
+                       | Corr == 0,
+                       FaultCount != 1) %>%
+    mutate(group = paste0(factor(Algorithm), factor(FaultCount), factor(Size), factor(Corr))) %>%
+    ggplot(aes(Nproc,
+               AvgTime.50, group=group)) +
+    geom_line(aes(col=factor(paste0(Corr, Algorithm)), lty=factor(FaultCount))) +
     geom_ribbon(aes(ymin=AvgTime.25, ymax=AvgTime.75), alpha=0.3) +
-    geom_point(aes(shape=factor(Algorithm), col=factor(Algorithm))) +
-    facet_grid(~Size) +
+    geom_point(aes(shape=factor(Algorithm), col=factor(paste0(Corr, Algorithm)))) +
+    scale_x_log10(breaks = breaks, labels = labels) +
     ylab('Latency, $\\mu{}s$') +  xlab("Processes") +
     theme_Publication() %+replace%
-    theme(legend.position = 'right',
+    theme(legend.position = 'none',
           legend.margin = margin(0.5, unit='mm'),
           legend.box.margin = margin(c(1, 1, 1, 1), unit='mm'),
           legend.spacing = unit(1, 'mm'),
           legend.key.height = unit(3, 'mm'),
           legend.key.width = unit(4, 'mm'),
           legend.background = element_blank()) +
+    annotate("segment",
+             x=annotation.df$x, xend=annotation.df$xend,
+             y=annotation.df$y, yend=annotation.df$yend,
+             color=annotation.df$color,
+             arrow=arrow(length = unit(2, "points"), type='closed'), lineend = 'round') +
+    annotate("text",
+             x=annotation.df$x, y=annotation.df$y+0.05,
+             label=annotation.df$label,
+             vjust=annotation.df$vjust, hjust=annotation.df$hjust,
+             color=annotation.df$color, size=3, alpha=1) +
+    annotate("text",
+             x=1810, y=15.15, label="$\\}$", size=6) +
+    annotate("text",
+             x=1930, y=14.6, label="256 bytes", size=3, angle=-90) +
+    annotate("text",
+             x=1810, y=9.45, label="$\\}$", size=6) +
+    annotate("text",
+             x=1930, y=9, label="8 bytes", size=3, angle=-90) +
     fill + col + lty + shape
 dev.off()
 
-df <- read.csv(paste0('../logs/taurus/', dir, '/table.csv')) %>%
-    mutate(Nproc = Nnodes * 24)
-df.sum <- df %>% 
-    group_by(Corr, Algorithm, Nproc, FaultCount, Size) %>%
-    summarize(AvgTime.50 = median(AvgTime),
-              AvgTime.25 = quantile(AvgTime, .25),
-              AvgTime.75 = quantile(AvgTime, .75))
-tikz('../../../../tree-broadcast/taurus.tex', width=2.1, height=2.0)
 
-breaks <- sort(unique(df.sum$Size))
-labels <- breaks
-col <- scale_color_manual(name="Correction", values=colors)
-shape <- scale_shape_manual(name="Correction", values=c(15, 16, 17, 14, 13))
-df.sum %>% filter(Size %in% c(256) & (Algorithm == 7)) %>%
-    ggplot(aes(as.factor(Nproc),
-               AvgTime.50, group=paste0(factor(Algorithm), factor(Corr)))) +
-    geom_line(aes(col=factor(Corr))) +
-    geom_ribbon(aes(ymin=AvgTime.25, ymax=AvgTime.75), alpha=0.3) +
-    geom_point(aes(shape=factor(Corr))) +
-    facet_grid(~FaultCount) +
-    ylab('Latency, $\\mu{}s$') +  xlab("Cores") +
-    theme_Publication() %+replace%
-    theme(legend.position = 'top',
-          legend.direction='horizontal',
-          legend.box='vertical',
-          legend.margin = margin(0.5, unit='mm'),
-          legend.box.margin = margin(c(0, 0, 1, 0.5), unit='mm'),
-          legend.spacing = unit(0.5, 'mm'),
-          legend.key.height = unit(2, 'mm'),
-          legend.key.width = unit(2, 'mm'),
-          legend.background = element_blank()) +
-    col + shape + ylim(c(12,20))
 
-dev.off()
-
-pdf('/tmp/taurus2.pdf', 16, 9)
-df.sum %>% filter(FaultCount == 0 & Algorithm != 'Native' & Nproc == 432) %>%
-    ggplot(aes(Size,
-               AvgTime.50, group=paste0(factor(Algorithm), factor(Corr)))) +
-    geom_ribbon(aes(ymin=AvgTime.25, ymax=AvgTime.75), alpha=0.3) +
-    geom_line(aes(col=factor(Algorithm), lty=factor(Corr))) +
-    geom_point(aes(shape=factor(Algorithm), col=factor(Algorithm))) +
-    scale_x_log10(breaks = breaks, labels = breaks) +
-    facet_grid(~Nproc) +
-    ylab('Latency, $\\mu{}s$') +  xlab("Size, b") +
-    theme_Publication() %+replace%
-    theme(legend.position = 'top',
-          legend.direction='horizontal',
-          legend.margin = margin(0.5, unit='mm'),
-          legend.box.margin = margin(c(0, 5, 1, 0.5), unit='mm'),
-          legend.spacing = unit(0.5, 'mm'),
-          legend.key.height = unit(2, 'mm'),
-          legend.background = element_blank()) +
-    fill + col + shape + scale_linetype_manual(name="Correction", values=c(1, 2, 3, 4)) +
-        ylim(c(0,20))
-df.sum %>% filter(Corr == 2) %>%
-    ggplot(aes(Size,
-               AvgTime.50, group=paste0(factor(Algorithm), factor(FaultCount)))) +
-    geom_ribbon(aes(ymin=AvgTime.25, ymax=AvgTime.75), alpha=0.3) +
-    geom_line(aes(col=factor(Algorithm), lty=factor(FaultCount))) +
-    geom_point(aes(shape=factor(Algorithm), col=factor(Algorithm))) +
-    scale_x_log10(breaks = breaks, labels = breaks) +
-    facet_grid(~Nproc) +
-    ylab('Latency, $\\mu{}s$') +  xlab("Size, b") +
-    theme_Publication() %+replace%
-    theme(legend.position = 'top',
-          legend.direction='horizontal',
-          legend.margin = margin(0.5, unit='mm'),
-          legend.box.margin = margin(c(0, 5, 1, 0.5), unit='mm'),
-          legend.spacing = unit(0.5, 'mm'),
-          legend.key.height = unit(2, 'mm'),
-          legend.background = element_blank()) +
-    fill + col + lty + shape +
-        ggtitle("Correction 2")
-df.sum %>% filter(Corr == 4) %>%
-    ggplot(aes(Size,
-               AvgTime.50, group=paste0(factor(Algorithm), factor(FaultCount)))) +
-    geom_ribbon(aes(ymin=AvgTime.25, ymax=AvgTime.75), alpha=0.3) +
-    geom_line(aes(col=factor(Algorithm), lty=factor(FaultCount))) +
-    geom_point(aes(shape=factor(Algorithm), col=factor(Algorithm))) +
-    scale_x_log10(breaks = breaks, labels = breaks) +
-    facet_grid(~Nproc) +
-    ylab('Latency, $\\mu{}s$') +  xlab("Size, b") +
-    theme_Publication() %+replace%
-    theme(legend.position = 'top',
-          legend.direction='horizontal',
-          legend.margin = margin(0.5, unit='mm'),
-          legend.box.margin = margin(c(0, 5, 1, 0.5), unit='mm'),
-          legend.spacing = unit(0.5, 'mm'),
-          legend.key.height = unit(2, 'mm'),
-          legend.background = element_blank()) +
-    fill + col + lty + shape +
-        ggtitle("Correction 4")
-dev.off()

@@ -111,6 +111,8 @@ read.dirs <- function(dirs) {
     return (df)
 }
 
+cur.size = 128
+
 ## Baseline comparison
 df <- read.dirs(c('180818_14-53-53.19551', '180818_15-12-16.6507', '180818_11-50-10.30858', '180818_11-50-10.28131_170818_23-47-31.6091', '180818_00-10-18.28049_180818_11-29-41.20840', '180818_17-04-13.32120'))
 
@@ -124,7 +126,7 @@ breaks <- sort(unique(df$Nproc))
 labels <- breaks
 tikz('../../../../tree-broadcast/plots/daint-baseline.tex', width=3.2, height=2.0)
 df %>%
-    filter(Size == 256, TreeType=='tree_binomial', Corr==0, CorrType != 'Mapping') %>%
+    filter(Size == cur.size, TreeType=='tree_binomial', Corr==0, CorrType != 'Mapping') %>%
     ggplot(aes(as.factor(Nproc), AvgTime.50, group=factor(CorrType), shape=factor(CorrType))) +
     geom_ribbon(aes(ymin=AvgTime.25, ymax=AvgTime.75), alpha = 0.3)+ 
     geom_line(aes(col=factor(CorrType))) +
@@ -141,7 +143,7 @@ df %>%
     ylab('Latency, $\\mu{}s$') +
     xlab("Processes") +
     col + lty + shape +
-    ylim(c(0,120))
+    ylim(c(0,75))
 dev.off()
 
 
@@ -155,17 +157,26 @@ df.all <- df.gossip %>%
     filter(TreeType == 'gossip') %>%
     bind_rows(df)
 
-annotation.df <- data.frame(x=0.55, xend=0.55, y=6.1, yend=1, color='black', label="Minimum", vjust='bottom', hjust='left', stringsAsFactors=FALSE)
-annotation.df[nrow(annotation.df) + 1, ] = list(0.9, 0.67, 4, 2.7, 'red', 'Binomial', 'bottom', 'center')
-annotation.df[nrow(annotation.df) + 1, ] = list(1.8, 1.85, 6.2, 4.52, 'blue', '4-ary', 'bottom', 'center')
-annotation.df[nrow(annotation.df) + 1, ] = list(2.8, 3, 7, 5.56, 'green', "Lam\\'e", 'bottom', 'center')
-annotation.df[nrow(annotation.df) + 1, ] = list(3.7, 4.15, 7, 6, 'violet', 'Optimal', 'bottom', 'center')
-annotation.df[nrow(annotation.df) + 1, ] = list(4.3, 4.3, 9, 7.9, 'orange', 'Gossip', 'bottom', 'center')
+colors <- c("black", '#e41a1c', '#377eb8','#4daf4a','#984ea3', "#ff7f00")
+## fill <- scale_fill_manual(name="Broadcast", values=colors)
+col <- scale_color_manual(name="Broadcast", values=colors)
+shape <- scale_shape_manual(name="Broadcast", values=c(15, 16, 17, 14, 13))
+lty <- scale_linetype_manual(name="Correction", values=c(1, 2, 3, 4))
+breaks <- sort(unique(df$Nproc))
+labels <- breaks
 
 tikz('../../../../tree-broadcast/plots/daint-no-faults.tex', width=3.2, height=2.0)
 
-df.all %>%
-    filter(Size == 8,
+annotation.df <- rbindlist(
+    list(
+        list(x=7000, xend=12800, y=120, yend=103, color='black', label="Gossip", vjust='bottom', hjust='center'),
+        list(20000, 15700, 13, 32.5, '#e41a1c', 'Binomial (Cray)', 'top', 'center'),
+        list(23500, 26500, 92, 74, '#377eb8', 'Binomial (ours)', 'bottom', 'center'),
+        list(9000, 14800, 45, 41, '#4daf4a', "Binomial (Cray, no SM)", 'center', 'right')
+    ),
+    use.name=TRUE, fill=FALSE, idcol=FALSE)
+p <- df.all %>%
+    filter(Size == cur.size,
            CorrType != 'Mapping') %>%
     mutate(Type = as.factor(paste0(TreeType, CorrType))) %>%
     ggplot(aes(Nproc, AvgTime.50, group=Type)) +
@@ -183,7 +194,7 @@ df.all %>%
     scale_x_log10(breaks = breaks, labels = labels) +
     ylab('Latency, $\\mu{}s$') +
     xlab("Processes") +
-    ylim(c(0,120)) +
+    ylim(c(0,130)) +
     annotate("segment",
              x=annotation.df$x, xend=annotation.df$xend,
              y=annotation.df$y, yend=annotation.df$yend,
@@ -193,15 +204,15 @@ df.all %>%
              x=annotation.df$x, y=annotation.df$y+0.05,
              label=annotation.df$label,
              vjust=annotation.df$vjust, hjust=annotation.df$hjust,
-             color=annotation.df$color, size=2.5, alpha=1)
+             color=annotation.df$color, size=3, alpha=1) +
+    col
+ggplotly(p)
 
 dev.off()
 
-df.trees <- read.dirs(c('190818_13-33-52.27729', '190818_13-37-15.8603', '190818_13-37-15.31546'))
-
-df.trees <- read.dirs(c('190818_14-54-39.24986', '190818_14-54-59.22228', '190818_14-55-13.8801'))
-
-df.trees <- read.dirs(c('190818_15-19-20.30623', '190818_15-19-20.23258', '190818_15-19-20.2114'))
+## df.trees <- read.dirs(c('190818_13-33-52.27729', '190818_13-37-15.8603', '190818_13-37-15.31546'))
+## df.trees <- read.dirs(c('190818_14-54-39.24986', '190818_14-54-59.22228', '190818_14-55-13.8801'))
+## df.trees <- read.dirs(c('190818_15-19-20.30623', '190818_15-19-20.23258', '190818_15-19-20.2114'))
 
 df.trees <- read.dirs(c('190818_15-40-23.17345', '190818_15-41-24.21472', '190818_20-07-04.30393', '190818_19-37-36.29645', '190818_19-52-19.21339', '190818_20-09-26.20031'))
 
@@ -214,13 +225,28 @@ df.all <- df.gossip %>%
 
 
 tikz('../../../../tree-broadcast/plots/daint-correction.tex', width=3.2, height=2.0)
-cur.size = 256
-df.trees %>%
+annotation.df <- rbindlist(
+    list(
+        list(x=4700, xend=7000, y=56, yend=53.5, color='#4daf4a', label='Binomial ($d=2$)', vjust='bottom', hjust='right'),
+        list(20500, 10700, 19, 30.5, '#ff7f00', 'Lame ($d=0, k=4$)', 'top', 'center'),
+        list(2000, 3000, 12, 21, '#e41a1c', "Binomial ($d=0$)", 'top', 'center'),
+        list(1800, 4000, 47, 35, '#377eb8', "Binomial ($d=1$)", 'bottom', 'center'),
+        list(16000, 20000, 62, 47.5, '#984ea3', "Binomial ($d=2$, with faults)", 'bottom', 'center')
+    ),
+    use.name=TRUE, fill=FALSE, idcol=FALSE)
+colors <- c('#e41a1c', '#377eb8','#4daf4a','#984ea3', "#ff7f00")
+## fill <- scale_fill_manual(name="Broadcast", values=colors)
+col <- scale_color_manual(name="Broadcast", values=colors)
+shape <- scale_shape_manual(name="Broadcast", values=c(15, 16, 17, 14, 13, 12))
+lty <- scale_linetype_manual(name="Correction", values=c(1, 2, 3, 4))
+breaks <- sort(unique(df$Nproc))
+labels <- breaks
+p <- df.trees %>%
     mutate(group = as.factor(paste(TreeType, CorrType, Corr, FaultCount))) %>%
     filter(Size %in% c(cur.size),
            CorrType != 'Native') %>%
     mutate(CorrType = ifelse(CorrType == 'Native', 'Cray MPI', 'Corrected')) %>%
-    ggplot(aes(as.factor(Nproc), AvgTime.50, group=group)) +
+    ggplot(aes(Nproc, AvgTime.50, group=group)) +
     geom_ribbon(aes(ymin=AvgTime.25, ymax=AvgTime.75), alpha = 0.3)+ 
     geom_line(aes(col=group, lty=as.factor(Corr))) +
     geom_point(aes(col=group, shape=group)) +
@@ -235,157 +261,45 @@ df.trees %>%
     scale_x_log10(breaks = breaks, labels = labels) +
     ylab('Latency, $\\mu{}s$') +
     xlab("Processes") +
-    ylim(c(0,100))
-dev.off()
-
-simpleCap <- function(x) {
-  s <- strsplit(x, " ")[[1]]
-  paste(toupper(substring(s, 1,1)), substring(s, 2),
-      sep="", collapse=" ")
-}
-
-
-colors <- c('#e41a1c', '#377eb8','#4daf4a','#984ea3', "#ff7f00", "black")
-## fill <- scale_fill_manual(name="Broadcast", values=colors)
-col <- scale_color_manual(name="Tree type", values=colors)
-shape <- scale_shape_manual(name="Tree type", values=c(15, 16, 17, 14, 13))
-lty <- scale_linetype_manual(name="Faults", values=c(1, 2, 3, 4))
-tikz('../../../../tree-broadcast/daint-lame.tex', width=3.2, height=2.0)
-
-df %>%
-    mutate(TreeFull = ifelse(TreeType == 'tree_binomial', 'Binomial', sprintf("Lam\\'e (%s)", LameK))) %>%
-    filter(Size %in% c(8),
-           TreeFull %in% c('Binomial', "Lam\\'e (2)"),
-           Corr == 4,
-           CorrType == 'Corrected') %>%
-    ggplot(aes(as.factor(Nproc), AvgTime.50, group=paste0(TreeFull, FaultCount), shape=factor(TreeFull), lty=factor(FaultCount))) +
-    geom_ribbon(aes(ymin=AvgTime.25, ymax=AvgTime.75), alpha = 0.3)+ 
-    geom_line(aes(col=factor(TreeFull))) +
-    geom_point(aes(col=factor(TreeFull))) +
-    theme_Publication() %+replace%
-    theme(legend.position = 'top',
-          legend.box = 'vertical',
-          legend.spacing.y = unit(1, unit='mm'),
-          legend.margin = margin(0.0, unit='mm'),
-          legend.key.width = unit(5, unit='mm'),
-          legend.box.margin = margin(c(0, 0, 0, 0), unit='mm'),
-          legend.background = element_blank()) +
-    scale_x_discrete(breaks = breaks, labels = labels) +
-    ylab('Latency, $\\mu{}s$') +
-    xlab("Processes") +
-    col + lty + shape +
-    ylim(c(0,65))
-
+    ylim(c(0,65)) +
+    annotate("segment",
+             x=annotation.df$x, xend=annotation.df$xend,
+             y=annotation.df$y, yend=annotation.df$yend,
+             color=annotation.df$color,
+             arrow=arrow(length = unit(2, "points"), type='closed'), lineend = 'round') +
+    annotate("text",
+             x=annotation.df$x, y=annotation.df$y+0.05,
+             label=annotation.df$label,
+             vjust=annotation.df$vjust, hjust=annotation.df$hjust,
+             color=annotation.df$color, size=3, alpha=1) +
+    col
 dev.off()
 
 
+## breaks <- sort(unique(df$Size))
+## labels <- breaks
+## df.all %>%
+##     mutate(group = as.factor(paste(TreeType, CorrType, Corr, FaultCount))) %>%
+##     filter(Nnodes %in% c(512)) %>%
+##     mutate(CorrType = ifelse(CorrType == 'Native', 'Cray MPI', 'Corrected')) %>%
+##     ggplot(aes(Size, AvgTime.50, group=group)) +
+##     geom_ribbon(aes(ymin=AvgTime.25, ymax=AvgTime.75), alpha = 0.3)+ 
+##     geom_line(aes(col=group, lty=as.factor(Corr))) +
+##     geom_point(aes(col=group, shape=group)) +
+##     theme_Publication() %+replace%
+##     theme(legend.position = 'top',
+##           legend.box = 'vertical',
+##           legend.spacing.y = unit(1, unit='mm'),
+##           legend.margin = margin(0.0, unit='mm'),
+##           legend.key.width = unit(5, unit='mm'),
+##           legend.box.margin = margin(c(0, 0, 0, 0), unit='mm'),
+##           legend.background = element_blank()) +
+##     ylab('Latency, $\\mu{}s$') +
+##     xlab("Size") +
+##     scale_x_log10(breaks = breaks, labels = labels)
 
-tikz('../../../../tree-broadcast/daint-ribbon.tex', width=3.2, height=2.0)
-df %>%
-    filter(Size %in% c(8, 256),
-           CorrFull %in% c('Native (0)', 'Corrected (0)', 'Corrected (2)', 'Corrected (4)'),
-           TreeType == 'tree_binomial',
-           FaultCount == 0) %>%
-    ggplot(aes(Nproc, AvgTime.50, group=paste0(CorrType, Corr), shape=factor(CorrType), lty=factor(Corr))) +
-    geom_ribbon(aes(ymin=AvgTime.25, ymax=AvgTime.75), alpha = 0.3)+ 
-    geom_line(aes(col=factor(CorrType))) +
-    geom_point(aes(col=factor(CorrType))) +
-    scale_x_log10(breaks = unique(df$Nproc), labels = unique(df$Nproc)) +
-    facet_grid(~Size) +
-    theme_Publication() %+replace%
-    theme(legend.position = c(0.25,0.7),
-          legend.margin = margin(0.5, unit='mm'),
-          legend.box.margin = margin(c(1, 1, 1, 1), unit='mm'),
-          legend.background = element_blank(),
-          legend.box.background = element_rect(colour = "black", fill='white')) +
-    scale_x_log10(breaks = breaks, labels = labels) +
-    ylab('Latency, $\\mu{}s$') +
-    xlab("Processes") +
-    col + lty + shape
-dev.off()
+## +
+##     ylim(c(0,200))
 
-
-tikz('../../../../tree-broadcast/daint-ribbon.tex', width=3.2, height=2.0)
-df %>%
-    group_by(CorrType, Corr, Nnodes, Nproc, FaultCount, Size) %>%
-    summarize(AvgTime.50 = median(AvgTime),
-              AvgTime.25 = quantile(AvgTime, .25),
-              AvgTime.75 = quantile(AvgTime, .75),
-              AvgTime.m = mean(AvgTime),
-              AvgTime.sd = sd(AvgTime),
-              MaxTime.50 = median(MaxTime),
-              MaxTime.25 = quantile(MaxTime, .25),
-              MaxTime.75 = quantile(MaxTime, .75)) %>%
-    ungroup() %>%
-    filter(!(Corr %in% c(4, 8))) %>%
-    mutate(Corr = ifelse(CorrType == 'Native', 'Cray MPI', ifelse(Corr == 0, 'Binomial', sprintf("%s (%s)", CorrType, Corr)))) %>%
-    filter(Size >= 4 & Size <= 1024) %>%
-    ggplot(aes(Size, AvgTime.50, shape = factor(Corr))) +
-    geom_ribbon(aes(ymin=AvgTime.25, ymax=AvgTime.75), alpha=0.3) +
-    geom_line(aes(col=factor(Corr))) +
-    geom_point(aes(col=factor(Corr))) +
-    scale_x_log10(breaks = breaks, labels = labels) +
-    ylab('Latency, $\\mu{}s$') +
-    xlab("Size, b") +
-    theme_Publication() %+replace%
-    theme(legend.position = c(0.25,0.7),
-          legend.margin = margin(0.5, unit='mm'),
-          legend.box.margin = margin(c(1, 1, 1, 1), unit='mm'),
-          legend.background = element_blank(),
-          legend.box.background = element_rect(colour = "black", fill='white')) +
-    ylim(c(0, 160)) +
-    fill + col + lty + shape
-dev.off()
-
-size.labeller <- function(x) {
-    sprintf("%s bytes payload", x)
-}
-
-tikz('../../tree-broadcast/daint.tex', width=3.2, height=2.0)
-df %>% filter(Size %in% c(8, 256),
-              Nproc %in% breaks) %>%
-    group_by(Algorithm, Nproc, FaultCount, Size) %>%
-    summarize(AvgTime.50 = median(AvgTime),
-              AvgTime.25 = quantile(AvgTime, .25),
-              AvgTime.75 = quantile(AvgTime, .75))  %>%
-    ggplot(aes(as.factor(Nproc),
-               AvgTime.50, group=paste0(factor(Algorithm), factor(FaultCount)))) +
-    geom_line(aes(col=factor(Algorithm), lty=factor(FaultCount))) +
-    geom_point(aes(shape=factor(Algorithm), col=factor(Algorithm))) +
-    facet_grid(~Size, labeller = as_labeller(size.labeller)) +
-    ylab('Latency, $\\mu{}s$') +  xlab("Cores") +
-    theme_Publication() %+replace%
-    theme(legend.position = c(0.5,0.9),
-          legend.direction='horizontal',
-          legend.margin = margin(0.5, unit='mm'),
-          legend.box.margin = margin(c(1, 0, 1, 0.5), unit='mm'),
-          legend.spacing = unit(0.5, 'mm'),
-          legend.key.height = unit(2, 'mm'),
-          legend.background = element_blank(),
-          legend.box.background = element_rect(colour = "black", fill='white')) +
-    fill + col + lty + shape
-dev.off()
-
-tikz('../../tree-broadcast/daint.tex', width=3.2, height=2.0)
-df %>% filter(Size %in% c(8, 256),
-              Nproc %in% breaks) %>%
-    group_by(Algorithm, Nproc, FaultCount, Size) %>%
-    summarize(AvgTime.50 = median(AvgTime),
-              AvgTime.25 = quantile(AvgTime, .25),
-              AvgTime.75 = quantile(AvgTime, .75))  %>%
-    ggplot(aes(as.factor(Nproc),
-               AvgTime.50, group=paste0(factor(Algorithm), factor(FaultCount)))) +
-    geom_line(aes(col=factor(Algorithm), lty=factor(FaultCount))) +
-    geom_point(aes(shape=factor(Algorithm), col=factor(Algorithm))) +
-    facet_grid(~Size) +
-    ylab('Latency, $\\mu{}s$') +  xlab("Cores") +
-    theme_Publication() %+replace%
-    theme(legend.position = 'top',
-          legend.direction='horizontal',
-          legend.margin = margin(0.5, unit='mm'),
-          legend.box.margin = margin(c(0, 5, 1, 0.5), unit='mm'),
-          legend.spacing = unit(0.5, 'mm'),
-          legend.key.height = unit(2, 'mm'),
-          legend.background = element_blank()) +
-    fill + col + lty + shape
-dev.off()
+## +
+##     col
