@@ -1,0 +1,2 @@
+--ignore-dir=.cquery_cached_index
+--ignore-dir=build

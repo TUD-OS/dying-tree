@@ -11,15 +11,13 @@ def parse_and_write_file(run_file, writer):
         lines = f.readlines()
 
     # Read first line of a log
-    in_params = lines[0].split()
-    alg, corr_dist, nproc, nnodes, i = in_params[:5]
-    dying = in_params[5:]
+    dying = lines[0].split(';')
     table = lines[2:]
 
     for line in table:
         if 'WARN' in line or '#' in line or len(line.strip()) == 0:
             continue
-        writer.writerow([corr_dist, nproc] + params + [','.join(dying)] + line.split())
+        writer.writerow(params + [','.join(dying)] + line.split())
 
 def parse_and_write(log_dir, writer):
     for run_file in glob.glob('{}/*'.format(log_dir)):
@@ -38,8 +36,11 @@ def main():
 
     with open(log_dir + '/table.csv', 'w') as f:
         writer = csv.writer(f)
-        writer.writerow(['Corr', 'Nproc', 'Algorithm', 'MaxSize', 'Nnodes',
-                         'FaultCount', 'i', 'FaultList', 'Size',
+        writer.writerow(['Algorithm', 'Corr', 'Nnodes',
+                         'FaultCount',
+                         'GossipSeed', 'GossipRounds',
+                         'Per_node', 'Nproc',
+                         'i', 'FaultList', 'Size',
                          'AvgTime', 'MinTime', 'MaxTime', 'Iterations'])
         parse_and_write(log_dir, writer)
 
