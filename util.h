@@ -1,7 +1,7 @@
 #pragma once
 
 // constants to be used throughout the code for error signaling
-#if IMPL_INSIDE_OMPI
+#if CORRT_IMPL_INSIDE_OMPI
     #define CORRT_ERR_SUCCESS   OMPI_SUCCESS
     #define CORRT_ERR_NO_MEM    OMPI_ERR_OUT_OF_RESOURCE
     #define CORRT_ERR_NOT_IMPL  OMPI_ERR_NOT_IMPLEMENTED

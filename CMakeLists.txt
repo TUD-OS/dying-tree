@@ -24,7 +24,9 @@ set(CMAKE_INCLUDE_CURRENT_DIR ON)
 
 IF(CMAKE_COMPILER_IS_GNUCXX)
   string(APPEND CMAKE_SHARED_LINKER_FLAGS " -Wl,--no-undefined")
+  #string(APPEND CMAKE_SHARED_LINKER_FLAGS_DEBUG " -fsanitize=address -fsanitize=undefined")
   string(APPEND CMAKE_C_FLAGS             " -fdiagnostics-color=always -fstrict-overflow -Wstrict-overflow")
+  #string(APPEND CMAKE_C_FLAGS_DEBUG       " -fsanitize=address -fsanitize=undefined")
 ENDIF(CMAKE_COMPILER_IS_GNUCXX)
 
 SET(CORRT_SRC
