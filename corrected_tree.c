@@ -18,6 +18,7 @@
     // types
     #define CORRT_MPI_STATUS ompi_status_public_t
     #define CORRT_OMPI_MODULE_TYPE mca_coll_base_module_t
+    #define CORRT_OMPI_MODULE_ARG module
 
     // functions
     #define CORRT_ALLOC_REQS(NUM) \
@@ -61,6 +62,7 @@
     // types
     #define CORRT_MPI_STATUS MPI_Status
     #define CORRT_OMPI_MODULE_TYPE void
+    #define CORRT_OMPI_MODULE_ARG NULL
 
     // functions
     #define CORRT_ALLOC_REQS(NUM) \
@@ -922,7 +924,7 @@ corrected_broadcast(void *const buff,
      * still present from the previous invocation.
      */
     if (epoch_global == 0) {
-        err = allocate_buffers(module);
+        err = allocate_buffers(CORRT_OMPI_MODULE_ARG);
         if (MPI_SUCCESS != err) { return err; }
 
         // Non-root ranks expect to receive ...
