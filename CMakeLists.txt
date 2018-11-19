@@ -49,3 +49,4 @@ add_executable(corrt_profile
   profile.c
   ${CORRT_SRC}
 )
+target_link_libraries(corrt_profile ${MPI_C_LIBRARIES})

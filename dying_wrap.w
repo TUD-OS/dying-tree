@@ -19,7 +19,7 @@ void corrt_statistics_print();
 {{fn fn_name MPI_Bcast}}
      if (!die_in_bcast()) {
        // {{callfn}}
-       {{ret_val}} = corrected_broadcast({{args}}, NULL);
+       {{ret_val}} = corrected_broadcast({{args}});
      }
 {{endfn}}
 
