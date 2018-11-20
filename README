@@ -1,7 +1,0 @@
-To compile anything on daint, you need to add '-dynamic' flag. Example for osu benchmarks:
-
-CXXFLAGS=-dynamic CFLAGS=-dynamic ./configure CC=$(which cc) CXX=$(which CC)
-
-Debugging partition:
-
-srun -C mc --export=DYING_LIST=,CORR_DIST=2,CORR_COUNT_MAX=256,TREE_TYPE=lame,TREE_LAME_K=2,LD_PRELOAD=../build/libdying.so --partition debug -n 48 ../../osu-micro-benchmarks-5.4.1/mpi/collective/osu_bcast -m 256 -f -i 1000
