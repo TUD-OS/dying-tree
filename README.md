@@ -1,4 +1,4 @@
-`dying-trees` is a mixture of 1) a failure emulator and 2) an implementation
+`libdying` is a mixture of 1) a failure emulator and 2) an implementation
 of corrected broadcast algorithms that can use either Gossip or trees in
 their dissemination. The library is designed to interpose MPI calls with
 the help of the PMPI interface. Calls to MPI_Bcast will then be replaced
@@ -35,17 +35,23 @@ The library is designed for being preloaded to an MPI application via the
 - `CORRT_DIST` — correction distance
 - `CORRT_COUNT_MAX` — maximum supported messge size
 - `CORRT_DISS_TYPE` — dissemination type
-  - `gossip` — (hop-based) Gossip, based on hops instead of time (see paper)
+  - `gossip` — Gossip, based on hops instead of time (see paper)
   - `tree_binomial` — interleaved binomial tree
   - `tree_lame` — interleaved Lamé tree
   - `tree_binomial_in_order` — non-interleaved binomial tree
 - `CORRT_GOSSIP_SEED` — random seed used to determine Gossip partners
-                        (not used for the tress)
+                        (used only with Gossip)
 - `CORRT_GOSSIP_ROUNDS` — number of hops a message travels in Gossip
-                          (Gossip is not limited by time but by this value)
+                          (used only with Gossip)
 - `TREE_LAME_K` — order of the Lamé tree (only used with Lamé tree)
 
 - `DYING_LIST` — comma-seperated list of ranks that "should die"
+
+Please note that the broadcast implementation is currently considered a
+prototype only. It overwrites the first byte of the payload data to store
+an epoch number so different broadcasts can be told apart. For Gossip, a
+second byte is used for the current Gossip step. A production-grade
+implementation would stores these value as part of the message header.
 
 
 ## Example usage
